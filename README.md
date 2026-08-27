@@ -24,9 +24,11 @@ bun run src/cli.ts
 ```
 
 `ctrl+k` opens the command palette. It contains every action and binding;
-`ctrl+c` always remains the terminal interrupt. When stdin and stdout are both
-terminals, agentsource opens the TUI. Otherwise it prints a JSON observation so
-agents and scripts can consume the result without an extra flag.
+`ctrl+c` always remains the terminal interrupt. The live TUI refreshes its
+observation roughly every five seconds, while `refresh projects` starts an
+immediate scan. When stdin and stdout are both terminals, agentsource opens the
+TUI. Otherwise it prints a JSON observation so agents and scripts can consume
+the result without an extra flag.
 
 ```console
 bun run src/cli.ts | jq '.projects[] | {name, working, unpushed}'

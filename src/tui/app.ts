@@ -4,6 +4,8 @@ import type { ScanResult } from "../types.ts";
 import { createCommandPalette } from "./palette.ts";
 import { GLYPHS, SIGNAL_ROOM } from "./theme.ts";
 
+const AUTO_REFRESH_DELAY_MS = 5_000;
+
 export interface TuiOptions {
   root?: string;
 }
@@ -128,6 +130,7 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
   let observation: ScanResult | null = null;
   let scanning = false;
   let closed = false;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void;
   const finished = new Promise<void>((resolve) => {
     finish = resolve;
@@ -181,6 +184,10 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
   const shutdown = (): void => {
     if (closed) return;
     closed = true;
+    if (refreshTimer !== undefined) {
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
+    }
     renderer.off("resize", paint);
     renderer.keyInput.off("keypress", onKeypress);
     process.off("SIGTERM", shutdown);
@@ -217,17 +224,30 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
     renderer.requestRender();
   };
 
-  const refresh = async (): Promise<void> => {
+  async function refresh(resetScroll = true): Promise<void> {
     if (scanning || closed) return;
+    if (refreshTimer !== undefined) {
+      clearTimeout(refreshTimer);
+      refreshTimer = undefined;
+    }
     scanning = true;
     paint();
     const next = await scanProjects({ ...(options.root ? { root: options.root } : {}) });
     if (closed) return;
     observation = next;
     scanning = false;
-    scroll.scrollTop = 0;
+    if (resetScroll) scroll.scrollTop = 0;
     paint();
-  };
+    scheduleRefresh();
+  }
+
+  function scheduleRefresh(): void {
+    if (closed) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      void refresh(false);
+    }, AUTO_REFRESH_DELAY_MS);
+  }
 
   renderer.keyInput.on("keypress", onKeypress);
   renderer.on("resize", paint);
