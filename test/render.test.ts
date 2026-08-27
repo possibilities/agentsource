@@ -3,6 +3,7 @@ import { stringWidth } from "bun";
 import {
   plainText,
   renderFailurePanel,
+  renderJson,
   renderProject,
   renderScan,
   renderSnapshot,
@@ -129,5 +130,17 @@ describe("responsive renderer", () => {
     expect(stringWidth(title)).toBeLessThanOrEqual(18);
     expect(title).not.toContain("\u001b");
     expect(title).not.toContain("\n");
+  });
+
+  test("JSON observations expose the complete versioned scan", () => {
+    const output = renderJson(RESULT);
+    expect(output.endsWith("\n")).toBe(true);
+    expect(JSON.parse(output)).toEqual({
+      schemaVersion: 1,
+      scannedAt: "2026-08-26T00:00:00.000Z",
+      root: RESULT.root,
+      projects: RESULT.projects,
+      diagnostics: RESULT.diagnostics,
+    });
   });
 });

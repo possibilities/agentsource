@@ -31,3 +31,9 @@ Unique commits on local branches that are not reachable from any locally known
 remote branch, plus the cumulative file statistics introduced by those
 commits. The observation never fetches.
 _Avoid_: ahead of upstream, unpushed files
+
+**Observation**
+A point-in-time, read-only scan of projects, including its root, timestamp,
+projects needing attention, and diagnostics. Non-interactive callers receive
+the schema-versioned JSON form.
+_Avoid_: status report, inventory

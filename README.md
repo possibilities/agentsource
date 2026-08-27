@@ -24,15 +24,22 @@ bun run src/cli.ts
 ```
 
 `ctrl+k` opens the command palette. It contains every action and binding;
-`ctrl+c` always remains the terminal interrupt. When stdout is piped, or when
-`--snapshot` is passed, agentsource prints a plain one-shot observation.
+`ctrl+c` always remains the terminal interrupt. When stdin and stdout are both
+terminals, agentsource opens the TUI. Otherwise it prints a JSON observation so
+agents and scripts can consume the result without an extra flag.
 
 ```console
-bun run src/cli.ts --snapshot
+bun run src/cli.ts | jq '.projects[] | {name, working, unpushed}'
+bun run src/cli.ts --json
+bun run src/cli.ts --snapshot  # explicit plain-text observation
 bun run src/cli.ts --root /path/to/projects
 scripts/install.sh --install
 scripts/install.sh --uninstall
 ```
+
+The JSON document has `schemaVersion: 1` and contains `scannedAt`, `root`,
+`projects`, and `diagnostics`. `--json` forces this output in a terminal;
+`--snapshot` forces the plain-text form in any environment.
 
 The installer runs `bun install --frozen-lockfile`, atomically links
 `~/.local/bin/agentsource` to this checkout's `src/cli.ts`, and records the

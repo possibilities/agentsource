@@ -48,3 +48,14 @@ export interface ScanResult {
   diagnostics: string[];
   scannedAt: Date;
 }
+
+export const OBSERVATION_SCHEMA_VERSION = 1 as const;
+
+/** Stable machine-readable form of a point-in-time scan. */
+export interface SerializedObservation {
+  schemaVersion: typeof OBSERVATION_SCHEMA_VERSION;
+  scannedAt: string;
+  root: string;
+  projects: ProjectStatus[];
+  diagnostics: string[];
+}

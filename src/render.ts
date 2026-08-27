@@ -1,6 +1,13 @@
 import { stringWidth } from "bun";
 import { GLYPHS, type TokenName } from "./tui/theme.ts";
-import type { ProjectStatus, ScanResult, WorkingStats, WorktreeStatus } from "./types.ts";
+import {
+  OBSERVATION_SCHEMA_VERSION,
+  type ProjectStatus,
+  type ScanResult,
+  type SerializedObservation,
+  type WorkingStats,
+  type WorktreeStatus,
+} from "./types.ts";
 
 export interface Span {
   text: string;
@@ -267,4 +274,18 @@ export function renderSnapshot(result: ScanResult, width = 100): string {
   ]);
   const body = plainText(renderScan(result, width));
   return `${title}\n\n${body}\n`;
+}
+
+export function serializeObservation(result: ScanResult): SerializedObservation {
+  return {
+    schemaVersion: OBSERVATION_SCHEMA_VERSION,
+    scannedAt: result.scannedAt.toISOString(),
+    root: result.root,
+    projects: result.projects,
+    diagnostics: result.diagnostics,
+  };
+}
+
+export function renderJson(result: ScanResult): string {
+  return `${JSON.stringify(serializeObservation(result))}\n`;
 }
