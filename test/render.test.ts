@@ -63,6 +63,9 @@ describe("responsive renderer", () => {
 
   test("live frames are chromeless while snapshots carry provenance", () => {
     const frame = plainText(renderScan(RESULT, 100));
+    expect(frame).toContain(
+      "▎ 1 PROJECT · 1 LINKED WORKTREE · 4 WORKING FILES · 3 UNPUSHED COMMITS",
+    );
     expect(frame).toContain("WORKING");
     expect(frame).toContain("UNPUSHED");
     expect(frame).toContain("UNMERGED INTO main");
@@ -71,8 +74,33 @@ describe("responsive renderer", () => {
     expect(renderSnapshot(RESULT, 100)).toStartWith("AGENTSOURCE · /Users/example/code");
   });
 
+  test("totals aggregate the observation and compress into a narrow two-row readout", () => {
+    const aggregate = {
+      ...RESULT,
+      projects: [
+        PROJECT,
+        {
+          ...PROJECT,
+          name: "another-project",
+          working: { ...PROJECT.working, files: 2 },
+          unpushed: { ...PROJECT.unpushed, commits: 5 },
+          worktrees: [...PROJECT.worktrees, ...PROJECT.worktrees],
+        },
+      ],
+    };
+    const wide = plainText(renderScan(aggregate, 120)).split("\n")[0];
+    expect(wide).toBe("▎ 2 PROJECTS · 3 LINKED WORKTREES · 6 WORKING FILES · 8 UNPUSHED COMMITS");
+
+    const narrow = plainText(renderScan(RESULT, 40)).split("\n").slice(0, 2);
+    expect(narrow).toEqual(["▎ PROJECTS  1   WORKTREES 1", "  WORKING   4   UNPUSHED  3"]);
+    for (const line of narrow) expect(stringWidth(line)).toBeLessThanOrEqual(40);
+  });
+
   test("empty state names the refresh command without adding a help rail", () => {
     const empty = plainText(renderScan({ ...RESULT, projects: [] }, 80));
+    expect(empty).toStartWith(
+      "▎ 0 PROJECTS · 0 LINKED WORKTREES · 0 WORKING FILES · 0 UNPUSHED COMMITS",
+    );
     expect(empty).toContain("○ CLEAR");
     expect(empty).toContain("Run refresh from the command palette");
     expect(empty).not.toContain("ctrl+k");

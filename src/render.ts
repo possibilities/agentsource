@@ -97,6 +97,63 @@ function count(value: number, singular: string, compact: string): string {
   return `${value}${compact}${value === 1 ? "" : ""}${compact === "" ? ` ${singular}${value === 1 ? "" : "s"}` : ""}`;
 }
 
+function totalMetric(value: number, singular: string): Line {
+  return [span(String(value)), span(` ${singular}${value === 1 ? "" : "S"}`, "muted")];
+}
+
+function renderObservationTotals(result: ScanResult, width: number): Line[] {
+  const totals = result.projects.reduce(
+    (sum, project) => ({
+      worktrees: sum.worktrees + project.worktrees.length,
+      workingFiles: sum.workingFiles + project.working.files,
+      unpushedCommits: sum.unpushedCommits + project.unpushed.commits,
+    }),
+    { worktrees: 0, workingFiles: 0, unpushedCommits: 0 },
+  );
+  if (width >= 72) {
+    const metrics = [
+      totalMetric(result.projects.length, "PROJECT"),
+      totalMetric(totals.worktrees, "LINKED WORKTREE"),
+      totalMetric(totals.workingFiles, "WORKING FILE"),
+      totalMetric(totals.unpushedCommits, "UNPUSHED COMMIT"),
+    ];
+    const line: Line = [span(GLYPHS.rail, "accent"), span(" ")];
+    metrics.forEach((metric, index) => {
+      if (index > 0) line.push(span(` ${GLYPHS.separator} `, "muted"));
+      line.push(...metric);
+    });
+    return [clipLine(line, width)];
+  }
+  const compactRow = (
+    prefix: Line,
+    leftLabel: string,
+    leftValue: number,
+    rightLabel: string,
+    rightValue: number,
+  ): Line =>
+    clipLine(
+      [
+        ...prefix,
+        span(leftLabel.padEnd(10), "muted"),
+        span(String(leftValue)),
+        span("   ", "canvas"),
+        span(rightLabel.padEnd(10), "muted"),
+        span(String(rightValue)),
+      ],
+      width,
+    );
+  return [
+    compactRow(
+      [span(GLYPHS.rail, "accent"), span(" ")],
+      "PROJECTS",
+      result.projects.length,
+      "WORKTREES",
+      totals.worktrees,
+    ),
+    compactRow([span("  ")], "WORKING", totals.workingFiles, "UNPUSHED", totals.unpushedCommits),
+  ];
+}
+
 function changeDetails(stats: WorkingStats, compact: boolean): string[] {
   const details: string[] = [];
   if (stats.staged > 0) details.push(compact ? `${stats.staged}stg` : `${stats.staged} staged`);
@@ -233,7 +290,7 @@ export function renderScan(result: ScanResult | null, width: number, scanning = 
       ],
     ];
   }
-  const lines: Line[] = [];
+  const lines: Line[] = [...renderObservationTotals(result, available), []];
   if (result.projects.length === 0) {
     if (result.diagnostics.length === 0) {
       lines.push([span(`${GLYPHS.idle} CLEAR`, "ok")]);
