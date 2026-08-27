@@ -19,6 +19,31 @@ test("CLI parses one-shot formats and root options", () => {
   expect(() => parseArgs(["--unknown"])).toThrow("unknown option");
 });
 
+test("CLI parses the webhook daemon without weakening its loopback-only listener", () => {
+  expect(
+    parseArgs([
+      "webhook-daemon",
+      "--secret-file",
+      "/tmp/webhook-secret",
+      "--port=9000",
+      "--socket",
+      "/tmp/agentsource.sock",
+    ]),
+  ).toEqual({
+    mode: "webhook-daemon",
+    secretFile: "/tmp/webhook-secret",
+    port: 9000,
+    socketPath: "/tmp/agentsource.sock",
+  });
+  expect(() => parseArgs(["webhook-daemon"])).toThrow("needs --secret-file");
+  expect(() =>
+    parseArgs(["webhook-daemon", "--secret-file", "/tmp/secret", "--port", "0"]),
+  ).toThrow("integer from 1 to 65535");
+  expect(() =>
+    parseArgs(["webhook-daemon", "--secret-file", "/tmp/secret", "--host", "0.0.0.0"]),
+  ).toThrow("unknown webhook-daemon option");
+});
+
 test("CLI chooses JSON automatically outside an interactive terminal", () => {
   expect(resolveMode("tui", true, true)).toBe("tui");
   expect(resolveMode("tui", false, true)).toBe("json");

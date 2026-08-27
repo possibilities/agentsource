@@ -59,3 +59,17 @@ export interface SerializedObservation {
   projects: ProjectStatus[];
   diagnostics: string[];
 }
+
+export const WEBHOOK_DELIVERY_SCHEMA_VERSION = 1 as const;
+
+/** One authenticated GitHub request broadcast on the local delivery stream. */
+export interface WebhookDelivery {
+  schemaVersion: typeof WEBHOOK_DELIVERY_SCHEMA_VERSION;
+  receivedAt: string;
+  owner: string;
+  repo: string;
+  event: string;
+  deliveryId: string;
+  hookId: string | null;
+  payload: unknown;
+}

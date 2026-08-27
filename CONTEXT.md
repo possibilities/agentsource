@@ -37,3 +37,14 @@ A point-in-time, read-only scan of projects, including its root, timestamp,
 projects needing attention, and diagnostics. Non-interactive callers receive
 the schema-versioned JSON form.
 _Avoid_: status report, inventory
+
+**Webhook delivery**
+One GitHub webhook request whose signature and project path agentsource has
+validated. Each delivery becomes one schema-versioned record on the delivery
+stream.
+_Avoid_: notification, callback
+
+**Delivery stream**
+The live, best-effort sequence of webhook deliveries broadcast through the
+agentsource Unix socket. It has no persistence or replay.
+_Avoid_: event queue, message bus

@@ -43,6 +43,85 @@ The JSON document has `schemaVersion: 1` and contains `scannedAt`, `root`,
 `projects`, and `diagnostics`. `--json` forces this output in a terminal;
 `--snapshot` forces the plain-text form in any environment.
 
+## GitHub webhook wiring
+
+Agentsource can run a foreground webhook daemon for a process supervisor. Its
+HTTP listener is fixed to `127.0.0.1`; expose that listener to GitHub through
+Tailscale Funnel. Each correctly signed request to `/<owner>/<repo>` becomes
+one newline-delimited JSON webhook delivery on a private Unix socket.
+
+Create one secret and keep it stable across the daemon and GitHub webhook
+configuration. The daemon refuses symlinked, non-regular, foreign-owned, or
+group/world-accessible secret files.
+
+```console
+install -d -m 700 ~/.config/agentsource
+(umask 077; set -C; openssl rand -hex 32 > ~/.config/agentsource/github-webhook-secret)
+chmod 600 ~/.config/agentsource/github-webhook-secret
+
+agentsource webhook-daemon \
+  --secret-file ~/.config/agentsource/github-webhook-secret
+```
+
+The secret-generation command refuses to overwrite an existing secret. Keep
+that file: replacing it requires promptly applying the new value to every
+GitHub webhook.
+
+In another terminal, publish the default loopback port through Funnel. This is
+the only supported network ingress; Funnel is public internet exposure, while
+the GitHub HMAC signature is the authentication boundary.
+
+```console
+tailscale funnel --bg 8787
+tailscale funnel status
+```
+
+Preview webhook reconciliation for every GitHub project directly under
+`~/code`, then apply the same plan. Replace the example with the `.ts.net`
+origin reported by Tailscale.
+
+```console
+scripts/configure-github-webhooks.ts \
+  --url https://machine.tailnet.ts.net \
+  --secret-file ~/.config/agentsource/github-webhook-secret
+
+scripts/configure-github-webhooks.ts \
+  --url https://machine.tailnet.ts.net \
+  --secret-file ~/.config/agentsource/github-webhook-secret \
+  --apply
+```
+
+When the Funnel hostname changes, pass the old origin explicitly so the helper
+updates the existing hook instead of creating another one:
+
+```console
+scripts/configure-github-webhooks.ts \
+  --url https://new-machine.tailnet.ts.net \
+  --previous-url https://old-machine.tailnet.ts.net \
+  --secret-file ~/.config/agentsource/github-webhook-secret \
+  --apply
+```
+
+The helper reads only local Git metadata, deduplicates multiple checkouts of
+the same GitHub project, reports non-GitHub origins, and uses `gh api` to
+create or update one active wildcard webhook at the project-specific URL. It
+never puts the secret in command-line arguments.
+
+A cheap local client can watch the stream directly:
+
+```console
+nc -U ~/.local/state/agentsource/webhooks.sock | jq --unbuffered -c .
+```
+
+The delivery record has `schemaVersion: 1`, `receivedAt`, `owner`, `repo`,
+`event`, `deliveryId`, `hookId`, and the parsed GitHub `payload`. The stream is
+live and best-effort: disconnected or slow clients can miss deliveries, and
+there is no persistence or replay in this slice.
+
+Secret rotation is not atomic in this slice. Do not replace the shared secret
+while deliveries must remain uninterrupted; overlapping-secret rotation is a
+follow-up capability.
+
 The installer runs `bun install --frozen-lockfile`, atomically links
 `~/.local/bin/agentsource` to this checkout's `src/cli.ts`, and records the
 deployed commit under `~/.local/state/agentsource`. AgentStart owns invoking
