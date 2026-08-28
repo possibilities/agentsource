@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  ensureWebhookSecret,
   type RunningWebhookDaemon,
   readWebhookSecret,
   startWebhookDaemon,
@@ -189,4 +198,29 @@ test("secret files must be private, owned regular files", async () => {
   const link = join(fixture, "secret-link");
   symlinkSync(path, link);
   await expect(readWebhookSecret(link)).rejects.toThrow("could not securely open");
+});
+
+test("secret creation is private and idempotent", async () => {
+  const fixture = mkdtempSync(join(tmpdir(), "agentsource-secret-create-"));
+  fixtures.push(fixture);
+  const path = join(fixture, "secret");
+
+  expect(await ensureWebhookSecret(path)).toBe("created");
+  const original = await readWebhookSecret(path);
+  expect(original).toHaveLength(64);
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+
+  expect(await ensureWebhookSecret(path)).toBe("existing");
+  expect(await readWebhookSecret(path)).toEqual(original);
+  expect(readdirSync(fixture)).toEqual(["secret"]);
+});
+
+test("secret creation never replaces an invalid existing final path", async () => {
+  const fixture = mkdtempSync(join(tmpdir(), "agentsource-secret-invalid-"));
+  fixtures.push(fixture);
+  const path = join(fixture, "secret");
+  writeFileSync(path, "too-short\n", { mode: 0o600 });
+
+  await expect(ensureWebhookSecret(path)).rejects.toThrow("at least 32 bytes");
+  expect(readdirSync(fixture)).toEqual(["secret"]);
 });

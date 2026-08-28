@@ -24,7 +24,7 @@ export type GhRunner = (args: readonly string[], input?: string) => Promise<GitR
 export interface ReconcileResult {
   project: GitHubProject;
   url: string;
-  action: "created" | "updated" | "would-create" | "would-update";
+  action: "created" | "updated" | "unchanged" | "would-create" | "would-update";
 }
 
 interface SetupInvocation {
@@ -38,7 +38,9 @@ interface SetupInvocation {
 
 interface GitHubHook {
   id: number;
-  config?: { url?: string };
+  active?: boolean;
+  events?: string[];
+  config?: { url?: string; content_type?: string; insecure_ssl?: string };
 }
 
 export function parseGitHubRemote(remote: string): { owner: string; repo: string } | null {
@@ -199,6 +201,8 @@ function parseHookList(output: string, project: GitHubProject): GitHubHook[] {
     if (typeof hook !== "object" || hook === null)
       throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
     const id = Reflect.get(hook, "id");
+    const active = Reflect.get(hook, "active");
+    const events = Reflect.get(hook, "events");
     const rawConfig = Reflect.get(hook, "config");
     if (
       typeof id !== "number" ||
@@ -209,9 +213,31 @@ function parseHookList(output: string, project: GitHubProject): GitHubHook[] {
       throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
     }
     const rawUrl = Reflect.get(rawConfig, "url");
+    const contentType = Reflect.get(rawConfig, "content_type");
+    const insecureSsl = Reflect.get(rawConfig, "insecure_ssl");
     if (rawUrl !== undefined && typeof rawUrl !== "string")
       throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
-    hooks.push({ id, config: { ...(rawUrl === undefined ? {} : { url: rawUrl }) } });
+    if (active !== undefined && typeof active !== "boolean")
+      throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
+    if (
+      events !== undefined &&
+      (!Array.isArray(events) || events.some((event) => typeof event !== "string"))
+    )
+      throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
+    if (contentType !== undefined && typeof contentType !== "string")
+      throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
+    if (insecureSsl !== undefined && typeof insecureSsl !== "string")
+      throw new Error(`${project.owner}/${project.repo}: GitHub returned malformed hook data`);
+    hooks.push({
+      id,
+      ...(active === undefined ? {} : { active }),
+      ...(events === undefined ? {} : { events: [...events] }),
+      config: {
+        ...(rawUrl === undefined ? {} : { url: rawUrl }),
+        ...(contentType === undefined ? {} : { content_type: contentType }),
+        ...(insecureSsl === undefined ? {} : { insecure_ssl: insecureSsl }),
+      },
+    });
   }
   return hooks;
 }
@@ -247,7 +273,17 @@ export async function reconcileGitHubWebhook(options: {
     );
   const existing = matches[0];
   if (!options.apply) {
-    return { project, url, action: existing ? "would-update" : "would-create" };
+    const correct =
+      existing?.active === true &&
+      existing.events?.length === 1 &&
+      existing.events[0] === "*" &&
+      existing.config?.content_type === "json" &&
+      existing.config.insecure_ssl === "0";
+    return {
+      project,
+      url,
+      action: correct ? "unchanged" : existing ? "would-update" : "would-create",
+    };
   }
 
   const config = {
@@ -319,7 +355,7 @@ export function parseSetupArgs(args: readonly string[]): SetupInvocation {
 }
 
 function setupUsage(): string {
-  return `Usage: scripts/configure-github-webhooks.ts --url HTTPS_ORIGIN --secret-file PATH [--previous-url HTTPS_ORIGIN] [--root PATH] [--apply]
+  return `Usage: agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--previous-url HTTPS_ORIGIN] [--root PATH] [--apply]
 
 Discover GitHub projects directly under ~/code and reconcile their repository
 webhooks. Without --apply, reports the changes it would make.
@@ -332,7 +368,7 @@ export async function runGitHubWebhookSetupCli(args = process.argv.slice(2)): Pr
     invocation = parseSetupArgs(args);
   } catch (error) {
     process.stderr.write(
-      `configure-github-webhooks: ${error instanceof Error ? error.message : String(error)}\n`,
+      `agentsource webhook-configure: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     process.stderr.write(setupUsage());
     return 2;
@@ -346,7 +382,7 @@ export async function runGitHubWebhookSetupCli(args = process.argv.slice(2)): Pr
     const secret = secretBytes.toString("utf8");
     const discovery = await discoverGitHubProjects(invocation.root as string);
     for (const diagnostic of discovery.diagnostics)
-      process.stderr.write(`configure-github-webhooks: ${diagnostic}\n`);
+      process.stderr.write(`agentsource webhook-configure: ${diagnostic}\n`);
     let failures = 0;
     for (const project of discovery.projects) {
       try {
@@ -364,14 +400,14 @@ export async function runGitHubWebhookSetupCli(args = process.argv.slice(2)): Pr
       } catch (error) {
         failures += 1;
         process.stderr.write(
-          `configure-github-webhooks: ${error instanceof Error ? error.message : String(error)}\n`,
+          `agentsource webhook-configure: ${error instanceof Error ? error.message : String(error)}\n`,
         );
       }
     }
     return failures === 0 ? 0 : 1;
   } catch (error) {
     process.stderr.write(
-      `configure-github-webhooks: ${error instanceof Error ? error.message : String(error)}\n`,
+      `agentsource webhook-configure: ${error instanceof Error ? error.message : String(error)}\n`,
     );
     return 1;
   }

@@ -44,6 +44,15 @@ test("CLI parses the webhook daemon without weakening its loopback-only listener
   ).toThrow("unknown webhook-daemon option");
 });
 
+test("CLI delegates installed webhook reconciliation without rewriting its arguments", () => {
+  expect(
+    parseArgs(["webhook-configure", "--url", "https://machine.tailnet.ts.net", "--apply"]),
+  ).toEqual({
+    mode: "webhook-configure",
+    args: ["--url", "https://machine.tailnet.ts.net", "--apply"],
+  });
+});
+
 test("CLI chooses JSON automatically outside an interactive terminal", () => {
   expect(resolveMode("tui", true, true)).toBe("tui");
   expect(resolveMode("tui", false, true)).toBe("json");

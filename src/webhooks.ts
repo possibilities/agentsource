@@ -1,6 +1,6 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { chmod, lstat, mkdir, open, unlink } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, unlink } from "node:fs/promises";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -12,7 +12,7 @@ import {
   createServer as createNetServer,
   type Socket,
 } from "node:net";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { WEBHOOK_DELIVERY_SCHEMA_VERSION, type WebhookDelivery } from "./types.ts";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -92,6 +92,59 @@ export async function readWebhookSecret(path: string): Promise<Buffer> {
     return Buffer.from(secret);
   } finally {
     await handle.close();
+  }
+}
+
+export async function ensureWebhookSecret(path: string): Promise<"created" | "existing"> {
+  const directory = dirname(path);
+  const temporary = join(
+    directory,
+    `.${basename(path)}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`,
+  );
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(
+      temporary,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    throw new Error(
+      `could not securely create a temporary webhook secret: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    try {
+      await handle.writeFile(`${randomBytes(32).toString("hex")}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncDirectory(directory);
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      await readWebhookSecret(path);
+      return "existing";
+    }
+    await syncDirectory(directory);
+    await readWebhookSecret(path);
+    return "created";
+  } finally {
+    await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+    await syncDirectory(directory);
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const directory = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
   }
 }
 

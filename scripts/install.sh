@@ -6,6 +6,8 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 SOURCE="$ROOT/src/cli.ts"
 BIN_DIR="${AGENTSOURCE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 STATE_DIR="${AGENTSOURCE_INSTALL_STATE_DIR:-$HOME/.local/state/agentsource}"
+CONFIG_DIR="${AGENTSOURCE_INSTALL_CONFIG_DIR:-$HOME/.config/agentsource}"
+WEBHOOK_SECRET="$CONFIG_DIR/github-webhook-secret"
 TARGET="$BIN_DIR/agentsource"
 RECEIPT="$STATE_DIR/deployed-sha"
 UPSTREAM_ORIGIN="https://github.com/possibilities/agentsource.git"
@@ -30,7 +32,8 @@ install, links ~/.local/bin/agentsource to this checkout, and writes the deploye
 Git SHA to ~/.local/state/agentsource/deployed-sha.
 
 Set AGENTSOURCE_INSTALL_BIN_DIR and AGENTSOURCE_INSTALL_STATE_DIR to use other
-locations (including for hermetic tests).
+locations. Set AGENTSOURCE_INSTALL_CONFIG_DIR to relocate the private webhook
+configuration (including for hermetic tests).
 USAGE
 }
 
@@ -228,6 +231,7 @@ install_agentsource() {
 
   ensure_directory "$BIN_DIR" "bin" 755
   ensure_directory "$STATE_DIR" "state" 700
+  ensure_directory "$CONFIG_DIR" "config" 700
   classify_command
   if receipt_exists; then
     [[ "$MANAGED_KIND" != "absent" ]] || die "Refusing an uncorroborated deployed receipt: $RECEIPT"
@@ -241,6 +245,7 @@ install_agentsource() {
   fi
 
   (cd "$ROOT" && bun install --frozen-lockfile)
+  (cd "$ROOT" && bun run scripts/ensure-webhook-secret.ts "$WEBHOOK_SECRET")
 
   TMP_PATH="$BIN_DIR/.agentsource-link.$$.$RANDOM"
   [[ ! -e "$TMP_PATH" && ! -L "$TMP_PATH" ]] || die "Refusing unsafe temporary command path: $TMP_PATH"

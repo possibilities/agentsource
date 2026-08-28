@@ -50,14 +50,13 @@ HTTP listener is fixed to `127.0.0.1`; expose that listener to GitHub through
 Tailscale Funnel. Each correctly signed request to `/<owner>/<repo>` becomes
 one newline-delimited JSON webhook delivery on a private Unix socket.
 
-Create one secret and keep it stable across the daemon and GitHub webhook
+The installer creates one private secret when it is absent and preserves it on
+every later run. Keep it stable across the daemon and GitHub webhook
 configuration. The daemon refuses symlinked, non-regular, foreign-owned, or
 group/world-accessible secret files.
 
 ```console
-install -d -m 700 ~/.config/agentsource
-(umask 077; set -C; openssl rand -hex 32 > ~/.config/agentsource/github-webhook-secret)
-chmod 600 ~/.config/agentsource/github-webhook-secret
+scripts/install.sh --install
 
 agentsource webhook-daemon \
   --secret-file ~/.config/agentsource/github-webhook-secret
@@ -81,11 +80,11 @@ Preview webhook reconciliation for every GitHub project directly under
 origin reported by Tailscale.
 
 ```console
-scripts/configure-github-webhooks.ts \
+agentsource webhook-configure \
   --url https://machine.tailnet.ts.net \
   --secret-file ~/.config/agentsource/github-webhook-secret
 
-scripts/configure-github-webhooks.ts \
+agentsource webhook-configure \
   --url https://machine.tailnet.ts.net \
   --secret-file ~/.config/agentsource/github-webhook-secret \
   --apply
@@ -95,7 +94,7 @@ When the Funnel hostname changes, pass the old origin explicitly so the helper
 updates the existing hook instead of creating another one:
 
 ```console
-scripts/configure-github-webhooks.ts \
+agentsource webhook-configure \
   --url https://new-machine.tailnet.ts.net \
   --previous-url https://old-machine.tailnet.ts.net \
   --secret-file ~/.config/agentsource/github-webhook-secret \
@@ -106,6 +105,15 @@ The helper reads only local Git metadata, deduplicates multiple checkouts of
 the same GitHub project, reports non-GitHub origins, and uses `gh api` to
 create or update one active wildcard webhook at the project-specific URL. It
 never puts the secret in command-line arguments.
+
+Dry-run `unchanged` means the properties GitHub exposes still agree: URL,
+active state, wildcard events, JSON content, and TLS verification. GitHub masks
+the stored secret, so remote HMAC agreement is proven only by an accepted
+delivery; it cannot be inferred from hook inspection alone.
+
+Reconciliation is deliberately scoped to GitHub projects currently found
+under the selected root. Removing a local project does not delete its remote
+hook; stale-hook inventory and explicit removal belong to a later slice.
 
 A cheap local client can watch the stream directly:
 

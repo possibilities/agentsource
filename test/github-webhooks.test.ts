@@ -165,6 +165,33 @@ test("dry-run inspects GitHub but does not mutate it", async () => {
   expect(calls).toBe(1);
 });
 
+test("dry-run distinguishes inspectable hook configuration from remote drift", async () => {
+  const project = { owner: "possibilities", repo: "agentsource", paths: ["/code/agentsource"] };
+  const result = await reconcileGitHubWebhook({
+    project,
+    baseUrl: "https://machine.tailnet.ts.net",
+    secret: "not-sent",
+    apply: false,
+    gh: async () =>
+      ok(
+        JSON.stringify([
+          {
+            id: 987,
+            active: true,
+            events: ["*"],
+            config: {
+              url: "https://machine.tailnet.ts.net/possibilities/agentsource",
+              content_type: "json",
+              insecure_ssl: "0",
+              secret: "********",
+            },
+          },
+        ]),
+      ),
+  });
+  expect(result.action).toBe("unchanged");
+});
+
 test("updates the existing hook when the Funnel hostname changes explicitly", async () => {
   const project = { owner: "possibilities", repo: "agentsource", paths: ["/code/agentsource"] };
   const calls: Array<{ args: readonly string[]; input?: string }> = [];

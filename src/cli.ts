@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { scanProjects } from "./git.ts";
+import { runGitHubWebhookSetupCli } from "./github-webhooks.ts";
 import { renderJson, renderSnapshot } from "./render.ts";
 import { runTui } from "./tui/app.ts";
 import { readWebhookSecret, startWebhookDaemon } from "./webhooks.ts";
@@ -19,7 +20,12 @@ interface WebhookDaemonInvocation {
   socketPath: string;
 }
 
-type Invocation = ObservationInvocation | WebhookDaemonInvocation;
+interface WebhookConfigureInvocation {
+  mode: "webhook-configure";
+  args: string[];
+}
+
+type Invocation = ObservationInvocation | WebhookDaemonInvocation | WebhookConfigureInvocation;
 
 export function defaultWebhookSocketPath(): string {
   return join(homedir(), ".local", "state", "agentsource", "webhooks.sock");
@@ -28,6 +34,7 @@ export function defaultWebhookSocketPath(): string {
 function usage(): string {
   return `Usage: agentsource [--json | --snapshot] [--root PATH]
        agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH]
+       agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]
 
 Show ~/code projects with working changes, unpushed work, or linked worktrees.
 
@@ -47,6 +54,9 @@ Webhook daemon options:
 }
 
 export function parseArgs(args: readonly string[]): Invocation {
+  if (args[0] === "webhook-configure") {
+    return { mode: "webhook-configure", args: [...args.slice(1)] };
+  }
   if (args[0] === "webhook-daemon") {
     let secretFile: string | undefined;
     let port = 8787;
@@ -129,6 +139,9 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
   if (mode === "help") {
     process.stdout.write(usage());
     return 0;
+  }
+  if (invocation.mode === "webhook-configure") {
+    return await runGitHubWebhookSetupCli(invocation.args);
   }
   if (invocation.mode === "webhook-daemon") {
     try {
