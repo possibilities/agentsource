@@ -106,7 +106,10 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
   const totals = result.projects.reduce(
     (sum, project) => ({
       worktrees: sum.worktrees + project.worktrees.length,
-      workingFiles: sum.workingFiles + project.working.files,
+      workingFiles:
+        sum.workingFiles +
+        project.primaryWorking.files +
+        project.worktrees.reduce((count, worktree) => count + worktree.working.files, 0),
       unpushedCommits: sum.unpushedCommits + project.unpushed.commits,
       agents:
         sum.agents +

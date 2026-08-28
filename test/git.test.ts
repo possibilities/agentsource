@@ -138,7 +138,6 @@ test("separate Git directories are recognized as primary checkouts", async () =>
 
     const result = await scanProjects({ root: projects, herdr: EMPTY_HERDR });
     expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.working.files).toBe(1);
     expect(result.projects[0]?.primaryWorking.files).toBe(1);
     expect(result.projects[0]?.worktrees).toHaveLength(0);
   } finally {
@@ -165,8 +164,8 @@ test("a linked-only separate-Git-dir project remains observable without treating
 
     const result = await scanProjects({ root: projects, herdr: EMPTY_HERDR });
     expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]?.working.files).toBe(1);
     expect(result.projects[0]?.worktrees).toHaveLength(1);
+    expect(result.projects[0]?.worktrees[0]?.working.files).toBe(1);
     expect(result.diagnostics.join("\n")).not.toContain("must be run in a work tree");
     expect(result.diagnostics.join("\n")).toContain(
       "does not record the location of its primary checkout",
@@ -206,7 +205,7 @@ test("scan aggregates a project and classifies its linked worktree against confi
     expect(result.projects.map((entry) => entry.name)).toEqual(["active project"]);
     const active = result.projects[0];
     expect(active?.primaryBranch).toBe("integration");
-    expect(active?.working).toMatchObject({
+    expect(active?.primaryWorking).toMatchObject({
       files: 2,
       additions: 1,
       deletions: 0,
@@ -266,7 +265,7 @@ test("an otherwise quiet project remains observable while a Herdr agent is prese
     expect(result.projects).toHaveLength(1);
     expect(result.projects[0]).toMatchObject({
       name: "agent-only",
-      working: { files: 0 },
+      primaryWorking: { files: 0 },
       unpushed: { commits: 0 },
       worktrees: [],
       agents: [{ agent: "codex", status: "idle", conversation: "quiet-project-work" }],

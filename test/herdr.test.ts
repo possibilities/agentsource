@@ -33,16 +33,6 @@ function project(): ProjectStatus {
       conflicts: 0,
       binary: 0,
     },
-    working: {
-      files: 0,
-      additions: 0,
-      deletions: 0,
-      staged: 0,
-      unstaged: 0,
-      untracked: 0,
-      conflicts: 0,
-      binary: 0,
-    },
     unpushed: { commits: 0, files: 0, additions: 0, deletions: 0, binary: 0 },
     agents: [],
     worktrees: [

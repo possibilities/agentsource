@@ -54,8 +54,6 @@ export interface ProjectStatus {
   displayPath: string;
   primaryBranch: string | null;
   primaryWorking: WorkingStats;
-  /** Aggregate working changes across the primary checkout and linked worktrees. */
-  working: WorkingStats;
   unpushed: UnpushedStats;
   agents: AgentPresence[];
   worktrees: WorktreeStatus[];

@@ -8,12 +8,13 @@ Agentsource is a read-only Signal Room TUI for the Git projects directly under
 - an additional linked worktree; or
 - a Herdr agent associated with its primary checkout or a linked worktree.
 
-The observation retains aggregate working statistics for project totals. In the
-TUI, working changes appear under the checkout that contains them: the primary
+Working statistics belong only to the checkout that contains them: the primary
 checkout has its own statistics, and every linked worktree reports its own
 statistics alongside its path, branch or detached HEAD, and ahead/behind and
-merged/unmerged relationship to the project's primary branch. The primary
-branch is `supervisor.trunk` when configured and `main` otherwise.
+merged/unmerged relationship to the project's primary branch. The
+observation-wide total is derived from those checkout-local records rather than
+stored again on each project. The primary branch is `supervisor.trunk` when
+configured and `main` otherwise.
 
 Agentsource takes one `herdr agent list` and one `herdr workspace list`
 snapshot per scan. It associates an agent through its workspace's recorded

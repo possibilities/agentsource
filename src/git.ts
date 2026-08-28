@@ -580,7 +580,6 @@ async function inspectProject(
     );
     return inspectLinkedWorktree(record, snapshot, primary, git);
   });
-  const working = aggregateWorking(snapshots);
   const primaryRecord = listed.records.find((record) => record.primary === true);
   const primarySnapshot = primaryRecord
     ? snapshots.find((candidate) => normalize(candidate.path) === normalize(primaryRecord.path))
@@ -592,7 +591,6 @@ async function inspectProject(
       displayPath: displayPath(entry.path),
       primaryBranch: primary.branch,
       primaryWorking: aggregateWorking(primarySnapshot ? [primarySnapshot] : []),
-      working,
       unpushed: unpushed.stats,
       agents: [],
       worktrees: worktrees.sort((left, right) => left.displayPath.localeCompare(right.displayPath)),
@@ -640,7 +638,8 @@ export async function scanProjects(options: ScanOptions = {}): Promise<ScanResul
     projects: projects
       .filter(
         (project) =>
-          project.working.files > 0 ||
+          project.primaryWorking.files > 0 ||
+          project.worktrees.some((worktree) => worktree.working.files > 0) ||
           project.unpushed.commits > 0 ||
           project.worktrees.length > 0 ||
           project.agents.length > 0,

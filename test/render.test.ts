@@ -25,16 +25,6 @@ const PROJECT: ProjectStatus = {
     conflicts: 0,
     binary: 0,
   },
-  working: {
-    files: 4,
-    additions: 120,
-    deletions: 9,
-    staged: 1,
-    unstaged: 2,
-    untracked: 1,
-    conflicts: 0,
-    binary: 0,
-  },
   unpushed: { commits: 3, files: 7, additions: 44, deletions: 2, binary: 1 },
   agents: [
     {
@@ -130,7 +120,7 @@ describe("responsive renderer", () => {
         {
           ...PROJECT,
           name: "another-project",
-          working: { ...PROJECT.working, files: 2 },
+          primaryWorking: { ...PROJECT.primaryWorking, files: 2 },
           unpushed: { ...PROJECT.unpushed, commits: 5 },
           worktrees: [...PROJECT.worktrees, ...PROJECT.worktrees],
         },
@@ -138,7 +128,7 @@ describe("responsive renderer", () => {
     };
     const wide = plainText(renderScan(aggregate, 120)).split("\n")[0];
     expect(wide).toBe(
-      "▎ 2 PROJECTS · 3 LINKED WORKTREES · 6 WORKING FILES · 8 UNPUSHED COMMITS · 5 HERDR AGENTS",
+      "▎ 2 PROJECTS · 3 LINKED WORKTREES · 14 WORKING FILES · 8 UNPUSHED COMMITS · 5 HERDR AGENTS",
     );
 
     const narrow = plainText(renderScan(RESULT, 40)).split("\n").slice(0, 2);
