@@ -1,6 +1,7 @@
 import { stringWidth } from "bun";
 import { GLYPHS, type TokenName } from "./tui/theme.ts";
 import {
+  type AgentPresence,
   OBSERVATION_SCHEMA_VERSION,
   type ProjectStatus,
   type ScanResult,
@@ -107,8 +108,12 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
       worktrees: sum.worktrees + project.worktrees.length,
       workingFiles: sum.workingFiles + project.working.files,
       unpushedCommits: sum.unpushedCommits + project.unpushed.commits,
+      agents:
+        sum.agents +
+        project.agents.length +
+        project.worktrees.reduce((count, worktree) => count + worktree.agents.length, 0),
     }),
-    { worktrees: 0, workingFiles: 0, unpushedCommits: 0 },
+    { worktrees: 0, workingFiles: 0, unpushedCommits: 0, agents: 0 },
   );
   if (width >= 72) {
     const metrics = [
@@ -117,6 +122,7 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
       totalMetric(totals.workingFiles, "WORKING FILE"),
       totalMetric(totals.unpushedCommits, "UNPUSHED COMMIT"),
     ];
+    if (width >= 92) metrics.push(totalMetric(totals.agents, "HERDR AGENT"));
     const line: Line = [span(GLYPHS.rail, "accent"), span(" ")];
     metrics.forEach((metric, index) => {
       if (index > 0) line.push(span(` ${GLYPHS.separator} `, "muted"));
@@ -154,6 +160,35 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
   ];
 }
 
+function agentToken(status: string): TokenName {
+  switch (status.toLowerCase()) {
+    case "working":
+      return "ok";
+    case "idle":
+      return "muted";
+    case "blocked":
+      return "danger";
+    case "done":
+      return "muted";
+    default:
+      return "remote";
+  }
+}
+
+function agentLine(agent: AgentPresence, width: number, indent: string): Line {
+  const token = agentToken(agent.status);
+  const identity = agent.conversation ?? (agent.sessionId ? agent.sessionId.slice(0, 8) : null);
+  const line: Line = [span(indent)];
+  line.push(
+    span(agent.status.toLowerCase() === "working" ? GLYPHS.live : GLYPHS.idle, token),
+    span(` ${agent.agent} `, "text", true),
+    span(agent.status.toUpperCase(), token),
+  );
+  if (identity) line.push(span(` ${GLYPHS.separator} ${identity}`, "muted"));
+  if (agent.focused) line.push(span(` ${GLYPHS.separator} FOCUSED`, "accent"));
+  return clipLine(line, width);
+}
+
 function changeDetails(stats: WorkingStats, compact: boolean): string[] {
   const details: string[] = [];
   if (stats.staged > 0) details.push(compact ? `${stats.staged}stg` : `${stats.staged} staged`);
@@ -168,12 +203,11 @@ function changeDetails(stats: WorkingStats, compact: boolean): string[] {
   return details;
 }
 
-function workingLine(project: ProjectStatus, width: number): Line {
-  const stats = project.working;
+function workingLine(stats: WorkingStats, width: number, indent = "  "): Line {
   const compact = width < 66;
   const label = compact ? "DIFF" : "WORKING";
   const line: Line = [
-    span("  "),
+    span(indent),
     span(label.padEnd(compact ? 7 : 11), stats.files > 0 ? "local" : "muted"),
   ];
   if (stats.files === 0) return [...line, span("clean", "muted")];
@@ -209,7 +243,38 @@ function unpushedLine(project: ProjectStatus, width: number): Line {
 function worktreeState(worktree: WorktreeStatus, primary: string | null, compact: boolean): Line {
   const branch = primary ?? "primary";
   const line: Line = [span(compact ? "    " : "      ")];
-  if (worktree.mergeState === "merged") {
+  if (
+    worktree.ahead !== null &&
+    worktree.behind !== null &&
+    worktree.ahead > 0 &&
+    worktree.behind > 0
+  ) {
+    line.push(
+      span("DIVERGED", "hot"),
+      span(compact ? ` ${branch}` : ` FROM ${branch}`, "muted"),
+      span(
+        compact
+          ? ` +${worktree.ahead} -${worktree.behind}`
+          : ` ${GLYPHS.separator} ${worktree.ahead} ahead ${GLYPHS.separator} ${worktree.behind} behind`,
+      ),
+    );
+  } else if (worktree.behind !== null && worktree.behind > 0) {
+    line.push(
+      span("BEHIND", "local"),
+      span(` ${branch}`, "muted"),
+      span(
+        compact
+          ? ` -${worktree.behind}`
+          : ` ${GLYPHS.separator} ${count(worktree.behind, "commit", "")}`,
+      ),
+    );
+  } else if (worktree.ahead !== null && worktree.ahead > 0) {
+    line.push(
+      span("UNMERGED", "hot"),
+      span(compact ? ` ${branch}` : ` INTO ${branch}`, "muted"),
+      span(compact ? ` +${worktree.ahead}` : ` ${GLYPHS.separator} ${worktree.ahead} ahead`),
+    );
+  } else if (worktree.mergeState === "merged") {
     line.push(span("MERGED", "ok"), span(compact ? ` ${branch}` : ` INTO ${branch}`, "muted"));
   } else if (worktree.mergeState === "unmerged") {
     line.push(span("UNMERGED", "hot"), span(compact ? ` ${branch}` : ` INTO ${branch}`, "muted"));
@@ -217,25 +282,6 @@ function worktreeState(worktree: WorktreeStatus, primary: string | null, compact
     line.push(
       span("UNKNOWN", "danger"),
       span(compact ? ` ${branch}` : ` AGAINST ${branch}`, "muted"),
-    );
-  }
-  if (worktree.ahead !== null && worktree.behind !== null) {
-    line.push(
-      span(
-        compact
-          ? ` +${worktree.ahead} -${worktree.behind}`
-          : ` ${GLYPHS.separator} ${worktree.ahead} ahead ${GLYPHS.separator} ${worktree.behind} behind`,
-      ),
-    );
-  }
-  if (worktree.dirtyFiles > 0) {
-    line.push(
-      span(
-        compact
-          ? ` ${GLYPHS.separator} ${worktree.dirtyFiles} dirty`
-          : ` ${GLYPHS.separator} ${count(worktree.dirtyFiles, "working file", "")}`,
-        "local",
-      ),
     );
   }
   return line;
@@ -246,10 +292,10 @@ function worktreeLines(worktree: WorktreeStatus, primary: string | null, width: 
   const name = worktree.branch ?? `detached@${worktree.head.slice(0, 8) || "unknown"}`;
   const first: Line = [span("    "), span(name, "text", true)];
   if (!compact) first.push(span(` ${GLYPHS.separator} ${worktree.displayPath}`, "muted"));
-  const lines = [
-    clipLine(first, width),
-    clipLine(worktreeState(worktree, primary, compact), width),
-  ];
+  const lines = [clipLine(first, width)];
+  for (const agent of worktree.agents) lines.push(agentLine(agent, width, "      "));
+  lines.push(workingLine(worktree.working, width, "      "));
+  lines.push(clipLine(worktreeState(worktree, primary, compact), width));
   if (compact) lines.push(clipLine([span("      "), span(worktree.displayPath, "muted")], width));
   if (worktree.issue) {
     lines.push(clipLine([span("      "), span(worktree.issue, "danger")], width));
@@ -260,16 +306,24 @@ function worktreeLines(worktree: WorktreeStatus, primary: string | null, width: 
 export function renderProject(project: ProjectStatus, width: number): Line[] {
   const available = Math.max(1, width);
   const linked = `${project.worktrees.length} linked`;
+  const agents =
+    project.agents.length +
+    project.worktrees.reduce((count, worktree) => count + worktree.agents.length, 0);
   const primary = project.primaryBranch ?? "PRIMARY ?";
+  const summary =
+    available < 66
+      ? `${primary} ${GLYPHS.separator} ${agents}a ${GLYPHS.separator} ${project.worktrees.length}w`
+      : `${primary} ${GLYPHS.separator} ${agents} agent${agents === 1 ? "" : "s"} ${GLYPHS.separator} ${linked}`;
   const header = aligned(
     [span(GLYPHS.rail, "accent", true), span(` ${project.name}`, "text", true)],
-    [span(`${primary} ${GLYPHS.separator} ${linked}`, project.primaryBranch ? "muted" : "danger")],
+    [span(summary, project.primaryBranch ? "muted" : "danger")],
     available,
   );
   const lines: Line[] = [header];
   if (available >= 66)
     lines.push(clipLine([span("  "), span(project.displayPath, "muted")], available));
-  lines.push(workingLine(project, available));
+  for (const agent of project.agents) lines.push(agentLine(agent, available, "  "));
+  lines.push(workingLine(project.primaryWorking, available));
   lines.push(unpushedLine(project, available));
   for (const worktree of project.worktrees) {
     lines.push(...worktreeLines(worktree, project.primaryBranch, available));
@@ -291,11 +345,15 @@ export function renderScan(result: ScanResult | null, width: number, scanning = 
     ];
   }
   const lines: Line[] = [...renderObservationTotals(result, available), []];
+  const warnings = [...result.diagnostics, ...result.agentPresence.diagnostics];
   if (result.projects.length === 0) {
-    if (result.diagnostics.length === 0) {
+    if (warnings.length === 0) {
       lines.push([span(`${GLYPHS.idle} CLEAR`, "ok")]);
       lines.push([
-        span("No projects have working changes, unpushed work, or linked worktrees.", "muted"),
+        span(
+          "No projects have working changes, unpushed work, linked worktrees, or agent presence.",
+          "muted",
+        ),
       ]);
       lines.push([span("Run refresh from the command palette to scan again.", "muted")]);
     }
@@ -304,14 +362,14 @@ export function renderScan(result: ScanResult | null, width: number, scanning = 
     if (index > 0) lines.push([]);
     lines.push(...renderProject(project, available));
   });
-  if (result.diagnostics.length > 0) {
+  if (warnings.length > 0) {
     if (lines.length > 0) lines.push([]);
     lines.push([span(`${GLYPHS.rail} OBSERVATION WARNINGS`, "danger", true)]);
-    for (const diagnostic of result.diagnostics.slice(0, 8)) {
+    for (const diagnostic of warnings.slice(0, 8)) {
       lines.push(clipLine([span("  "), span(diagnostic, "danger")], available));
     }
-    if (result.diagnostics.length > 8) {
-      lines.push([span(`  ${result.diagnostics.length - 8} more warnings`, "muted")]);
+    if (warnings.length > 8) {
+      lines.push([span(`  ${warnings.length - 8} more warnings`, "muted")]);
     }
   }
   return lines;
@@ -339,6 +397,7 @@ export function serializeObservation(result: ScanResult): SerializedObservation 
     scannedAt: result.scannedAt.toISOString(),
     root: result.root,
     projects: result.projects,
+    agentPresence: result.agentPresence,
     diagnostics: result.diagnostics,
   };
 }

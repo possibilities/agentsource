@@ -36,7 +36,7 @@ function usage(): string {
        agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH]
        agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]
 
-Show ~/code projects with working changes, unpushed work, or linked worktrees.
+Show ~/code projects with working changes, unpushed work, linked worktrees, or Herdr agents.
 
 Opens the TUI in a terminal; otherwise prints one JSON observation.
 

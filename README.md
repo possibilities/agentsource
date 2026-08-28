@@ -5,12 +5,22 @@ Agentsource is a read-only Signal Room TUI for the Git projects directly under
 
 - working changes in any live checkout;
 - commits on local branches that no locally known remote branch contains; or
-- an additional linked worktree.
+- an additional linked worktree; or
+- a Herdr agent associated with its primary checkout or a linked worktree.
 
-Each project reports aggregate working and unpushed statistics. Every linked
-worktree reports its path, branch or detached HEAD, working-file count, and its
-ahead/behind and merged/unmerged relationship to the project's primary branch.
-The primary branch is `supervisor.trunk` when configured and `main` otherwise.
+The observation retains aggregate working statistics for project totals. In the
+TUI, working changes appear under the checkout that contains them: the primary
+checkout has its own statistics, and every linked worktree reports its own
+statistics alongside its path, branch or detached HEAD, and ahead/behind and
+merged/unmerged relationship to the project's primary branch. The primary
+branch is `supervisor.trunk` when configured and `main` otherwise.
+
+Agentsource takes one `herdr agent list` and one `herdr workspace list`
+snapshot per scan. It associates an agent through its workspace's recorded
+checkout when available, then falls back to the most-specific known checkout
+containing the agent's current directory. An agent that starts elsewhere and
+later creates a worktree cannot be attributed without Herdr recording that
+provenance, so Agentsource does not guess.
 
 Agentsource never fetches and never writes to a repository. Remote state means
 “as of the last fetch,” and untracked contents are not read merely to calculate
@@ -39,8 +49,13 @@ scripts/install.sh --install
 scripts/install.sh --uninstall
 ```
 
-The JSON document has `schemaVersion: 1` and contains `scannedAt`, `root`,
-`projects`, and `diagnostics`. `--json` forces this output in a terminal;
+The JSON document has `schemaVersion: 2` and contains `scannedAt`, `root`,
+`projects`, `agentPresence`, and `diagnostics`. Each project and linked
+worktree has an `agents` array; normalized entries include harness and status,
+conversation and session identity when available, Herdr pane/tab/workspace
+identifiers, and focus state. `agentPresence.available` distinguishes an empty
+agent snapshot from an unavailable Herdr surface, while its diagnostics record
+degraded workspace metadata. `--json` forces this output in a terminal;
 `--snapshot` forces the plain-text form in any environment.
 
 ## GitHub webhook wiring

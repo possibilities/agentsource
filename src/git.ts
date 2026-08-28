@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, relative, resolve } from "node:path";
+import { attachAgentPresence, type HerdrRunner, readHerdrSnapshot, runHerdr } from "./herdr.ts";
 import type {
   ProjectStatus,
   ScanResult,
@@ -515,11 +516,12 @@ async function inspectLinkedWorktree(
       displayPath: displayPath(record.path),
       branch: record.detached ? null : record.branch,
       head,
-      dirtyFiles: snapshot?.status.length ?? 0,
+      working: aggregateWorking(snapshot ? [snapshot] : []),
       ahead: null,
       behind: null,
       mergeState: "unknown",
       issue,
+      agents: [],
     };
   }
   const [counts, contained] = await Promise.all([
@@ -536,7 +538,7 @@ async function inspectLinkedWorktree(
     displayPath: displayPath(record.path),
     branch: record.detached ? null : record.branch,
     head,
-    dirtyFiles: snapshot?.status.length ?? 0,
+    working: aggregateWorking(snapshot ? [snapshot] : []),
     ahead: countIssue || mergeIssue ? null : ahead,
     behind: countIssue || mergeIssue ? null : behind,
     mergeState: countIssue || mergeIssue ? "unknown" : contained.code === 0 ? "merged" : "unmerged",
@@ -545,13 +547,14 @@ async function inspectLinkedWorktree(
       (countIssue || mergeIssue
         ? counts.stderr.trim() || contained.stderr.trim() || "could not compare with primary branch"
         : null),
+    agents: [],
   };
 }
 
 async function inspectProject(
   entry: ProjectEntry,
   git: GitRunner,
-): Promise<{ project: ProjectStatus | null; diagnostics: string[] }> {
+): Promise<{ project: ProjectStatus; diagnostics: string[] }> {
   const diagnostics: string[] = [];
   const listed = await liveWorktrees(entry, git);
   if (listed.issue) diagnostics.push(`${displayPath(entry.path)}: ${listed.issue}`);
@@ -578,17 +581,20 @@ async function inspectProject(
     return inspectLinkedWorktree(record, snapshot, primary, git);
   });
   const working = aggregateWorking(snapshots);
-  if (working.files === 0 && unpushed.stats.commits === 0 && worktrees.length === 0) {
-    return { project: null, diagnostics };
-  }
+  const primaryRecord = listed.records.find((record) => record.primary === true);
+  const primarySnapshot = primaryRecord
+    ? snapshots.find((candidate) => normalize(candidate.path) === normalize(primaryRecord.path))
+    : undefined;
   return {
     project: {
       name: basename(entry.path),
       path: entry.path,
       displayPath: displayPath(entry.path),
       primaryBranch: primary.branch,
+      primaryWorking: aggregateWorking(primarySnapshot ? [primarySnapshot] : []),
       working,
       unpushed: unpushed.stats,
+      agents: [],
       worktrees: worktrees.sort((left, right) => left.displayPath.localeCompare(right.displayPath)),
       issues,
     },
@@ -599,29 +605,51 @@ async function inspectProject(
 export interface ScanOptions {
   root?: string;
   git?: GitRunner;
+  herdr?: HerdrRunner;
 }
 
 /** Scan direct projects under ~/code. The operation is entirely read-only. */
 export async function scanProjects(options: ScanOptions = {}): Promise<ScanResult> {
   const root = normalize(options.root ?? resolve(homedir(), "code"));
   const git = options.git ?? runGit;
+  const herdrSnapshot = readHerdrSnapshot(options.herdr ?? runHerdr);
   let entries: ProjectEntry[];
   try {
     entries = await discoverProjects(root, git);
   } catch (error) {
+    const presence = await herdrSnapshot;
     return {
       root,
       projects: [],
+      agentPresence: {
+        available: presence.available,
+        diagnostics: presence.diagnostics,
+      },
       diagnostics: [error instanceof Error ? error.message : String(error)],
       scannedAt: new Date(),
     };
   }
-  const inspected = await mapLimit(entries, 4, async (entry) => inspectProject(entry, git));
+  const [inspected, presence] = await Promise.all([
+    mapLimit(entries, 4, async (entry) => inspectProject(entry, git)),
+    herdrSnapshot,
+  ]);
+  const projects = inspected.map(({ project }) => project);
+  await attachAgentPresence(projects, presence);
   return {
     root,
-    projects: inspected
-      .flatMap(({ project }) => (project ? [project] : []))
+    projects: projects
+      .filter(
+        (project) =>
+          project.working.files > 0 ||
+          project.unpushed.commits > 0 ||
+          project.worktrees.length > 0 ||
+          project.agents.length > 0,
+      )
       .sort((left, right) => left.name.localeCompare(right.name)),
+    agentPresence: {
+      available: presence.available,
+      diagnostics: presence.diagnostics,
+    },
     diagnostics: inspected.flatMap(({ diagnostics }) => diagnostics),
     scannedAt: new Date(),
   };

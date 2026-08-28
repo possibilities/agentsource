@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseNumstat, parseStatus, parseWorktrees, scanProjects } from "../src/git.ts";
+import type { HerdrRunner } from "../src/herdr.ts";
 
 const GIT_ENV = {
   ...process.env,
@@ -19,6 +20,18 @@ const GIT_ENV = {
   GIT_COMMITTER_NAME: "Agentsource Test",
   GIT_COMMITTER_EMAIL: "agentsource@example.invalid",
 };
+
+const EMPTY_HERDR: HerdrRunner = async (args) => ({
+  code: 0,
+  stdout: JSON.stringify({
+    id: `cli:${args[0]}:list`,
+    result:
+      args[0] === "agent"
+        ? { type: "agent_list", agents: [] }
+        : { type: "workspace_list", workspaces: [] },
+  }),
+  stderr: "",
+});
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
@@ -123,9 +136,10 @@ test("separate Git directories are recognized as primary checkouts", async () =>
     git(project, "commit", "-m", "base");
     appendFileSync(join(project, "base.txt"), "working\n");
 
-    const result = await scanProjects({ root: projects });
+    const result = await scanProjects({ root: projects, herdr: EMPTY_HERDR });
     expect(result.projects).toHaveLength(1);
     expect(result.projects[0]?.working.files).toBe(1);
+    expect(result.projects[0]?.primaryWorking.files).toBe(1);
     expect(result.projects[0]?.worktrees).toHaveLength(0);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
@@ -149,7 +163,7 @@ test("a linked-only separate-Git-dir project remains observable without treating
     git(primary, "worktree", "add", "-b", "feature", linked);
     appendFileSync(join(linked, "base.txt"), "linked change\n");
 
-    const result = await scanProjects({ root: projects });
+    const result = await scanProjects({ root: projects, herdr: EMPTY_HERDR });
     expect(result.projects).toHaveLength(1);
     expect(result.projects[0]?.working.files).toBe(1);
     expect(result.projects[0]?.worktrees).toHaveLength(1);
@@ -186,7 +200,7 @@ test("scan aggregates a project and classifies its linked worktree against confi
     const primaryIndexBefore = readFileSync(primaryIndex);
     const linkedIndexBefore = readFileSync(linkedIndex);
 
-    const result = await scanProjects({ root: projects });
+    const result = await scanProjects({ root: projects, herdr: EMPTY_HERDR });
     expect(readFileSync(primaryIndex)).toEqual(primaryIndexBefore);
     expect(readFileSync(linkedIndex)).toEqual(linkedIndexBefore);
     expect(result.projects.map((entry) => entry.name)).toEqual(["active project"]);
@@ -203,11 +217,61 @@ test("scan aggregates a project and classifies its linked worktree against confi
     expect(active?.worktrees).toHaveLength(1);
     expect(active?.worktrees[0]).toMatchObject({
       branch: "feature",
-      dirtyFiles: 0,
+      working: { files: 0 },
       ahead: 1,
       behind: 0,
       mergeState: "unmerged",
     });
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("an otherwise quiet project remains observable while a Herdr agent is present", async () => {
+  const fixture = mkdtempSync(join(tmpdir(), "agentsource-agent-only-"));
+  try {
+    const projects = join(fixture, "code");
+    mkdirSync(projects);
+    const project = createPushedProject(projects, "agent-only");
+    const herdr: HerdrRunner = async (args) => ({
+      code: 0,
+      stdout: JSON.stringify({
+        id: `cli:${args[0]}:list`,
+        result:
+          args[0] === "agent"
+            ? {
+                type: "agent_list",
+                agents: [
+                  {
+                    agent: "codex",
+                    agent_status: "idle",
+                    cwd: project,
+                    focused: false,
+                    pane_id: "w1:p1",
+                    tab_id: "w1:t1",
+                    workspace_id: "w1",
+                    tokens: { conversation: "quiet-project-work" },
+                  },
+                ],
+              }
+            : {
+                type: "workspace_list",
+                workspaces: [{ workspace_id: "w1", worktree: { checkout_path: project } }],
+              },
+      }),
+      stderr: "",
+    });
+
+    const result = await scanProjects({ root: projects, herdr });
+    expect(result.projects).toHaveLength(1);
+    expect(result.projects[0]).toMatchObject({
+      name: "agent-only",
+      working: { files: 0 },
+      unpushed: { commits: 0 },
+      worktrees: [],
+      agents: [{ agent: "codex", status: "idle", conversation: "quiet-project-work" }],
+    });
+    expect(result.agentPresence).toEqual({ available: true, diagnostics: [] });
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

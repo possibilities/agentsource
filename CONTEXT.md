@@ -38,6 +38,11 @@ projects needing attention, and diagnostics. Non-interactive callers receive
 the schema-versioned JSON form.
 _Avoid_: status report, inventory
 
+**Agent presence**
+A Herdr-reported agent deterministically associated with a primary checkout or
+linked worktree by workspace checkout metadata or by its current directory.
+_Avoid_: agent ownership, inferred worktree author
+
 **Webhook delivery**
 One GitHub webhook request whose signature and project path agentsource has
 validated. Each delivery becomes one schema-versioned record on the delivery
