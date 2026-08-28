@@ -12,6 +12,12 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CiProjectionStore } from "../src/github-ci.ts";
+import {
+  CI_PROJECTION_SCHEMA_VERSION,
+  type CiProjection,
+  type WebhookDelivery,
+} from "../src/types.ts";
 import {
   ensureWebhookSecret,
   type RunningWebhookDaemon,
@@ -28,18 +34,25 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true });
 });
 
-async function start(options: { maxBodyBytes?: number } = {}): Promise<RunningWebhookDaemon> {
+async function start(
+  options: { maxBodyBytes?: number; ciStore?: CiProjectionStore } = {},
+): Promise<RunningWebhookDaemon> {
   const fixture = mkdtempSync(join(tmpdir(), "agentsource-webhooks-"));
   fixtures.push(fixture);
   const daemon = await startWebhookDaemon({
     secret: SECRET,
     socketPath: join(fixture, "webhooks.sock"),
     port: 0,
+    root: fixture,
     now: () => new Date("2026-08-27T20:00:00.000Z"),
     ...options,
   });
   daemons.push(daemon);
   return daemon;
+}
+
+function subscribe(socket: Socket, patterns: string[]): void {
+  socket.write(`${JSON.stringify({ schemaVersion: 1, subscribe: patterns })}\n`);
 }
 
 async function connect(path: string): Promise<Socket> {
@@ -50,26 +63,114 @@ async function connect(path: string): Promise<Socket> {
   });
 }
 
-function nextRecord(socket: Socket): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    let buffered = "";
-    socket.setEncoding("utf8");
-    socket.on("data", (chunk: string) => {
-      buffered += chunk;
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) return;
+interface SocketReader {
+  buffered: string;
+  records: Record<string, unknown>[];
+  waiting: Array<{
+    resolve: (record: Record<string, unknown>) => void;
+    reject: (error: unknown) => void;
+  }>;
+}
+
+const socketReaders = new WeakMap<Socket, SocketReader>();
+
+function readerFor(socket: Socket): SocketReader {
+  const existing = socketReaders.get(socket);
+  if (existing) return existing;
+  const reader: SocketReader = { buffered: "", records: [], waiting: [] };
+  socketReaders.set(socket, reader);
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string) => {
+    reader.buffered += chunk;
+    let newline = reader.buffered.indexOf("\n");
+    while (newline >= 0) {
+      const line = reader.buffered.slice(0, newline);
+      reader.buffered = reader.buffered.slice(newline + 1);
       try {
-        resolve(JSON.parse(buffered.slice(0, newline)) as Record<string, unknown>);
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        const waiting = reader.waiting.shift();
+        if (waiting) waiting.resolve(parsed);
+        else reader.records.push(parsed);
       } catch (error) {
-        reject(error);
+        const waiting = reader.waiting.shift();
+        if (waiting) waiting.reject(error);
       }
-    });
-    socket.once("error", reject);
+      newline = reader.buffered.indexOf("\n");
+    }
   });
+  socket.once("error", (error) => {
+    for (const waiting of reader.waiting.splice(0)) waiting.reject(error);
+  });
+  return reader;
+}
+
+function nextRecord(socket: Socket): Promise<Record<string, unknown>> {
+  const reader = readerFor(socket);
+  const record = reader.records.shift();
+  if (record) return Promise.resolve(record);
+  return new Promise((resolve, reject) => reader.waiting.push({ resolve, reject }));
 }
 
 function signature(body: string): string {
   return `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
+}
+
+function projection(owner: string, repo: string, revision = 1): CiProjection {
+  return {
+    schemaVersion: CI_PROJECTION_SCHEMA_VERSION,
+    revision,
+    projectedAt: "2026-08-27T19:59:00.000Z",
+    owner,
+    repo,
+    paths: [`/code/${repo}`],
+    available: true,
+    defaultBranch: "main",
+    headSha: "abc123",
+    headCommittedAt: "2026-08-27T19:58:00.000Z",
+    aggregateState: "PENDING",
+    contexts: [],
+    diagnostics: [],
+  };
+}
+
+class FakeCiStore implements CiProjectionStore {
+  readonly diagnostics: readonly string[] = [];
+  readonly #listeners = new Set<(value: CiProjection) => void>();
+  readonly #projections: CiProjection[];
+
+  constructor(projections: CiProjection[]) {
+    this.#projections = projections;
+  }
+
+  list(): readonly CiProjection[] {
+    return this.#projections;
+  }
+
+  onUpdate(listener: (value: CiProjection) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  handleDelivery(delivery: WebhookDelivery): void {
+    const index = this.#projections.findIndex(
+      (value) =>
+        value.owner.toLowerCase() === delivery.owner.toLowerCase() &&
+        value.repo.toLowerCase() === delivery.repo.toLowerCase(),
+    );
+    const current = this.#projections[index];
+    if (index < 0 || !current || delivery.event !== "status") return;
+    const updated = {
+      ...current,
+      revision: current.revision + 1,
+      aggregateState: "SUCCESS" as const,
+    };
+    this.#projections[index] = updated;
+    for (const listener of this.#listeners) listener(updated);
+  }
+
+  async close(): Promise<void> {
+    this.#listeners.clear();
+  }
 }
 
 async function deliver(
@@ -97,6 +198,7 @@ describe("webhook daemon", () => {
   test("broadcasts one authenticated delivery as schema-versioned NDJSON", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
+    subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const body = `{
   "repository": { "full_name": "possibilities/agentsource" },
@@ -109,13 +211,18 @@ describe("webhook daemon", () => {
     expect(await response.json()).toEqual({ accepted: true, deliveryId: "delivery-123" });
     expect(await recordPromise).toEqual({
       schemaVersion: 1,
-      receivedAt: "2026-08-27T20:00:00.000Z",
-      owner: "possibilities",
-      repo: "agentsource",
-      event: "push",
-      deliveryId: "delivery-123",
-      hookId: "42",
-      payload,
+      channel: "deliveries",
+      emittedAt: "2026-08-27T20:00:00.000Z",
+      data: {
+        schemaVersion: 1,
+        receivedAt: "2026-08-27T20:00:00.000Z",
+        owner: "possibilities",
+        repo: "agentsource",
+        event: "push",
+        deliveryId: "delivery-123",
+        hookId: "42",
+        payload,
+      },
     });
     expect(statSync(daemon.socketPath).mode & 0o777).toBe(0o600);
     socket.destroy();
@@ -124,19 +231,23 @@ describe("webhook daemon", () => {
   test("flushes one large delivery before treating a client as lagging", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
+    subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const payload = {
       repository: { full_name: "possibilities/agentsource" },
       data: "x".repeat(64 * 1024),
     };
     expect((await deliver(daemon, JSON.stringify(payload))).status).toBe(202);
-    expect(((await recordPromise).payload as typeof payload).data).toHaveLength(64 * 1024);
+    expect(((await recordPromise).data as { payload: typeof payload }).payload.data).toHaveLength(
+      64 * 1024,
+    );
     socket.destroy();
   });
 
   test("rejects invalid signatures and project mismatches without broadcasting them", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
+    subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const body = JSON.stringify({ repository: { full_name: "possibilities/agentsource" } });
 
@@ -146,8 +257,79 @@ describe("webhook daemon", () => {
     expect(mismatched.status).toBe(422);
     const accepted = await deliver(daemon, body, { "x-github-delivery": "delivery-good" });
     expect(accepted.status).toBe(202);
-    expect((await recordPromise).deliveryId).toBe("delivery-good");
+    expect(((await recordPromise).data as WebhookDelivery).deliveryId).toBe("delivery-good");
     socket.destroy();
+  });
+
+  test("sends one initial projection per exact or prefix-matched CI channel", async () => {
+    const ciStore = new FakeCiStore([
+      projection("possibilities", "agentsource"),
+      projection("possibilities", "agentstart"),
+    ]);
+    const daemon = await start({ ciStore });
+
+    const exact = await connect(daemon.socketPath);
+    const exactRecord = nextRecord(exact);
+    subscribe(exact, ["ci:possibilities:agentsource"]);
+    expect(await exactRecord).toMatchObject({
+      channel: "ci:possibilities:agentsource",
+      data: { owner: "possibilities", repo: "agentsource", revision: 1 },
+    });
+
+    const prefix = await connect(daemon.socketPath);
+    let received = "";
+    prefix.setEncoding("utf8");
+    prefix.on("data", (chunk: string) => {
+      received += chunk;
+    });
+    subscribe(prefix, ["ci:possibilities:*"]);
+    await Bun.sleep(10);
+    const channels = received
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { channel: string }).channel);
+    expect(channels).toEqual(["ci:possibilities:agentsource", "ci:possibilities:agentstart"]);
+    exact.destroy();
+    prefix.destroy();
+  });
+
+  test("emits only the changed repository projection after a relevant delivery", async () => {
+    const ciStore = new FakeCiStore([
+      projection("possibilities", "agentsource"),
+      projection("possibilities", "agentstart"),
+    ]);
+    const daemon = await start({ ciStore });
+    const socket = await connect(daemon.socketPath);
+    subscribe(socket, ["deliveries", "ci:possibilities:agentsource"]);
+    await nextRecord(socket);
+
+    const deliveryRecord = nextRecord(socket);
+    const projectionRecord = nextRecord(socket);
+    const body = JSON.stringify({
+      repository: { full_name: "possibilities/agentsource" },
+      sha: "abc123",
+    });
+    expect((await deliver(daemon, body, { "x-github-event": "status" })).status).toBe(202);
+    expect(await deliveryRecord).toMatchObject({ channel: "deliveries" });
+    expect(await projectionRecord).toMatchObject({
+      channel: "ci:possibilities:agentsource",
+      data: { revision: 2, aggregateState: "SUCCESS" },
+    });
+    socket.destroy();
+  });
+
+  test("closes clients that send malformed or unknown subscriptions", async () => {
+    const daemon = await start();
+    for (const request of [
+      "not-json\n",
+      `${JSON.stringify({ schemaVersion: 1, subscribe: [] })}\n`,
+      `${JSON.stringify({ schemaVersion: 1, subscribe: ["actions:*"] })}\n`,
+    ]) {
+      const socket = await connect(daemon.socketPath);
+      const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+      socket.write(request);
+      await closed;
+    }
   });
 
   test("rejects oversized bodies and non-JSON webhook requests", async () => {

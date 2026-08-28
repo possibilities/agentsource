@@ -12,8 +12,16 @@ import {
   createServer as createNetServer,
   type Socket,
 } from "node:net";
+import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { WEBHOOK_DELIVERY_SCHEMA_VERSION, type WebhookDelivery } from "./types.ts";
+import { type CiProjectionStore, ciChannel, createCiProjectionStore } from "./github-ci.ts";
+import {
+  CHANNEL_PROTOCOL_SCHEMA_VERSION,
+  type ChannelEnvelope,
+  type ChannelSubscription,
+  WEBHOOK_DELIVERY_SCHEMA_VERSION,
+  type WebhookDelivery,
+} from "./types.ts";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024;
@@ -25,6 +33,11 @@ const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}$/;
 const EVENT_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DELIVERY_ID_PATTERN = /^[A-Za-z0-9-]{1,128}$/;
+const MAX_SUBSCRIPTION_BYTES = 16 * 1024;
+const MAX_SUBSCRIPTION_PATTERNS = 64;
+const SUBSCRIPTION_TIMEOUT_MS = 5_000;
+const CI_CHANNEL_PATTERN = /^ci:[a-z0-9](?:[a-z0-9-]{0,38}):[a-z0-9_.-]{1,100}$/;
+const CI_PREFIX_PATTERN = /^ci:(?:[a-z0-9](?:[a-z0-9-]{0,38}):)?\*$/;
 
 export interface WebhookDaemonOptions {
   secret: Uint8Array;
@@ -34,18 +47,23 @@ export interface WebhookDaemonOptions {
   maxInFlightBodyBytes?: number;
   maxConcurrentRequests?: number;
   now?: () => Date;
+  root?: string;
+  ciStore?: CiProjectionStore;
 }
 
 export interface RunningWebhookDaemon {
   host: typeof LOOPBACK_HOST;
   port: number;
   socketPath: string;
+  diagnostics: readonly string[];
   close: () => Promise<void>;
 }
 
-interface DeliveryClient {
+interface ChannelClient {
   socket: Socket;
   backpressured: boolean;
+  subscription: string[] | null;
+  input: string;
 }
 
 class BodyTooLargeError extends Error {}
@@ -54,6 +72,44 @@ class ServerBusyError extends Error {}
 interface BodyBudget {
   reserve: (bytes: number) => boolean;
   release: (bytes: number) => void;
+}
+
+function parseSubscription(line: string): ChannelSubscription | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const schemaVersion = Reflect.get(value, "schemaVersion");
+  const subscribe = Reflect.get(value, "subscribe");
+  if (
+    schemaVersion !== CHANNEL_PROTOCOL_SCHEMA_VERSION ||
+    !Array.isArray(subscribe) ||
+    subscribe.length < 1 ||
+    subscribe.length > MAX_SUBSCRIPTION_PATTERNS
+  )
+    return null;
+  const patterns = new Set<string>();
+  for (const candidate of subscribe) {
+    if (typeof candidate !== "string" || candidate !== candidate.toLowerCase()) return null;
+    if (
+      candidate !== "deliveries" &&
+      candidate !== "*" &&
+      !CI_PREFIX_PATTERN.test(candidate) &&
+      !CI_CHANNEL_PATTERN.test(candidate)
+    )
+      return null;
+    patterns.add(candidate);
+  }
+  return { schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION, subscribe: [...patterns] };
+}
+
+function subscriptionMatches(patterns: readonly string[], channel: string): boolean {
+  return patterns.some((pattern) =>
+    pattern.endsWith("*") ? channel.startsWith(pattern.slice(0, -1)) : pattern === channel,
+  );
 }
 
 function ownedByCurrentUser(uid: number): boolean {
@@ -330,17 +386,86 @@ export async function startWebhookDaemon(
   await ensureSocketDirectory(options.socketPath);
   await removeStaleSocket(options.socketPath);
 
-  const clients = new Set<DeliveryClient>();
+  const now = options.now ?? (() => new Date());
+  const ciStore =
+    options.ciStore ??
+    (await createCiProjectionStore({
+      root: options.root ?? join(homedir(), "code"),
+      now,
+    }));
+  const clients = new Set<ChannelClient>();
+
+  const send = (
+    client: ChannelClient,
+    channel: string,
+    data: unknown,
+    queueInitialValue = false,
+  ): void => {
+    if (!client.subscription || !subscriptionMatches(client.subscription, channel)) return;
+    if (client.backpressured && !queueInitialValue) {
+      client.socket.destroy();
+      return;
+    }
+    const envelope: ChannelEnvelope = {
+      schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
+      channel,
+      emittedAt: now().toISOString(),
+      data,
+    };
+    if (!client.socket.write(`${JSON.stringify(envelope)}\n`)) client.backpressured = true;
+  };
+
+  const broadcast = (channel: string, data: unknown): void => {
+    for (const client of clients) send(client, channel, data);
+  };
+
   const socketServer = createNetServer((client) => {
-    const state = { socket: client, backpressured: false };
+    const state: ChannelClient = {
+      socket: client,
+      backpressured: false,
+      subscription: null,
+      input: "",
+    };
     clients.add(state);
     client.setNoDelay(true);
+    client.setEncoding("utf8");
+    client.setTimeout(SUBSCRIPTION_TIMEOUT_MS, () => client.destroy());
     client.on("error", () => client.destroy());
     client.on("drain", () => {
       state.backpressured = false;
     });
+    client.on("data", (chunk: string) => {
+      if (state.subscription) {
+        client.destroy();
+        return;
+      }
+      state.input += chunk;
+      if (Buffer.byteLength(state.input, "utf8") > MAX_SUBSCRIPTION_BYTES) {
+        client.destroy();
+        return;
+      }
+      const newline = state.input.indexOf("\n");
+      if (newline < 0) return;
+      if (state.input.slice(newline + 1).trim() !== "") {
+        client.destroy();
+        return;
+      }
+      const subscription = parseSubscription(state.input.slice(0, newline));
+      if (!subscription) {
+        client.destroy();
+        return;
+      }
+      state.subscription = subscription.subscribe;
+      state.input = "";
+      client.setTimeout(0);
+      for (const projection of ciStore.list())
+        send(state, ciChannel(projection.owner, projection.repo), projection, true);
+    });
     client.on("close", () => clients.delete(state));
   });
+  const stopCiUpdates = ciStore.onUpdate((projection) =>
+    broadcast(ciChannel(projection.owner, projection.repo), projection),
+  );
   const closeDeliveryStream = async (): Promise<void> => {
     const closing = closeServer(socketServer);
     for (const client of clients) client.socket.destroy();
@@ -356,19 +481,10 @@ export async function startWebhookDaemon(
       await closeDeliveryStream().catch(() => undefined);
       await unlink(options.socketPath).catch(() => undefined);
     }
+    stopCiUpdates();
+    await ciStore.close();
     throw error;
   }
-
-  const broadcast = (delivery: WebhookDelivery): void => {
-    const record = `${JSON.stringify(delivery)}\n`;
-    for (const client of clients) {
-      if (client.backpressured) {
-        client.socket.destroy();
-        continue;
-      }
-      if (!client.socket.write(record)) client.backpressured = true;
-    }
-  };
 
   let inFlightBodyBytes = 0;
   let inFlightRequests = 0;
@@ -444,7 +560,7 @@ export async function startWebhookDaemon(
       }
       const delivery: WebhookDelivery = {
         schemaVersion: WEBHOOK_DELIVERY_SCHEMA_VERSION,
-        receivedAt: (options.now ?? (() => new Date()))().toISOString(),
+        receivedAt: now().toISOString(),
         owner: project.owner,
         repo: project.repo,
         event,
@@ -452,7 +568,8 @@ export async function startWebhookDaemon(
         hookId,
         payload,
       };
-      broadcast(delivery);
+      broadcast("deliveries", delivery);
+      ciStore.handleDelivery(delivery);
       respond(response, 202, { accepted: true, deliveryId });
     } catch (error) {
       if (error instanceof BodyTooLargeError) {
@@ -483,6 +600,8 @@ export async function startWebhookDaemon(
   } catch (error) {
     await closeDeliveryStream();
     await unlink(options.socketPath).catch(() => undefined);
+    stopCiUpdates();
+    await ciStore.close();
     throw error;
   }
 
@@ -491,10 +610,13 @@ export async function startWebhookDaemon(
     host: LOOPBACK_HOST,
     port: boundPort,
     socketPath: options.socketPath,
+    diagnostics: ciStore.diagnostics,
     close: async () => {
       if (closed) return;
       closed = true;
       await Promise.all([closeServer(httpServer), closeDeliveryStream()]);
+      stopCiUpdates();
+      await ciStore.close();
       await unlink(options.socketPath).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== "ENOENT") throw error;
       });

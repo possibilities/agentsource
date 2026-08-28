@@ -45,11 +45,35 @@ _Avoid_: agent ownership, inferred worktree author
 
 **Webhook delivery**
 One GitHub webhook request whose signature and project path agentsource has
-validated. Each delivery becomes one schema-versioned record on the delivery
-stream.
+validated. Each delivery becomes one schema-versioned value on the delivery
+channel.
 _Avoid_: notification, callback
 
-**Delivery stream**
-The live, best-effort sequence of webhook deliveries broadcast through the
-agentsource Unix socket. It has no persistence or replay.
+**Channel**
+A named live feed on the agentsource Unix socket. Every emitted envelope names
+its channel; channels are best-effort and have no persistence or replay beyond
+the initial projection supplied by projection channels.
 _Avoid_: event queue, message bus
+
+**Subscription**
+The single schema-versioned request a socket client sends to select exact
+channels or terminal-star prefixes. A subscription to a projection prefix
+receives one current value for each matching projection before live updates.
+_Avoid_: filter, consumer group
+
+**Delivery channel**
+The `deliveries` channel carrying every validated webhook delivery after a
+client subscribes. It has no initial value or replay.
+_Avoid_: raw channel, firehose
+
+**CI projection**
+The complete current GitHub check and commit-status state for one registered
+project's remote default-branch HEAD. Its channel is `ci:<owner>:<repo>`;
+`ci:*` subscribes to every registered CI projection.
+_Avoid_: Actions channel, workflow history
+
+**Registered project**
+A GitHub project discovered as a direct child of the webhook daemon's chosen
+root when it starts. Registration is observational and does not alter either
+the local project or its GitHub repository.
+_Avoid_: configured hook, watched repository

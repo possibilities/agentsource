@@ -93,3 +93,69 @@ export interface WebhookDelivery {
   hookId: string | null;
   payload: unknown;
 }
+
+export const CHANNEL_PROTOCOL_SCHEMA_VERSION = 1 as const;
+
+/** The one request a Unix-socket client sends before receiving channel values. */
+export interface ChannelSubscription {
+  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
+  subscribe: string[];
+}
+
+/** One value emitted on a subscribed Unix-socket channel. */
+export interface ChannelEnvelope<T = unknown> {
+  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
+  channel: string;
+  emittedAt: string;
+  data: T;
+}
+
+export const CI_PROJECTION_SCHEMA_VERSION = 1 as const;
+
+export type CiAggregateState =
+  | "ERROR"
+  | "EXPECTED"
+  | "FAILURE"
+  | "PENDING"
+  | "SUCCESS"
+  | "NONE"
+  | "UNAVAILABLE";
+
+export interface CiCheckRun {
+  kind: "check-run";
+  name: string;
+  status: string;
+  conclusion: string | null;
+  detailsUrl: string | null;
+  app: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface CiStatusContext {
+  kind: "status";
+  name: string;
+  state: string;
+  description: string | null;
+  targetUrl: string | null;
+  createdAt: string | null;
+}
+
+export type CiContext = CiCheckRun | CiStatusContext;
+
+/** Complete current CI state for one registered project's default-branch HEAD. */
+export interface CiProjection {
+  schemaVersion: typeof CI_PROJECTION_SCHEMA_VERSION;
+  revision: number;
+  projectedAt: string;
+  owner: string;
+  repo: string;
+  paths: string[];
+  available: boolean;
+  defaultBranch: string | null;
+  headSha: string | null;
+  headCommittedAt: string | null;
+  aggregateState: CiAggregateState;
+  contexts: CiContext[];
+  diagnostics: string[];
+}

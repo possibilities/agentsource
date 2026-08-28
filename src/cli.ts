@@ -18,6 +18,7 @@ interface WebhookDaemonInvocation {
   secretFile: string;
   port: number;
   socketPath: string;
+  root: string;
 }
 
 interface WebhookConfigureInvocation {
@@ -33,7 +34,7 @@ export function defaultWebhookSocketPath(): string {
 
 function usage(): string {
   return `Usage: agentsource [--json | --snapshot] [--root PATH]
-       agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH]
+       agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH] [--root PATH]
        agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]
 
 Show ~/code projects with working changes, unpushed work, linked worktrees, or Herdr agents.
@@ -50,6 +51,7 @@ Webhook daemon options:
   --secret-file PATH  read the GitHub webhook secret from a private file
   --port PORT         loopback HTTP port for Tailscale Funnel (default: 8787)
   --socket PATH       Unix delivery stream socket
+  --root PATH         register direct GitHub projects below PATH (default: ~/code)
 `;
 }
 
@@ -61,14 +63,16 @@ export function parseArgs(args: readonly string[]): Invocation {
     let secretFile: string | undefined;
     let port = 8787;
     let socketPath = defaultWebhookSocketPath();
+    let root = join(homedir(), "code");
     for (let index = 1; index < args.length; index += 1) {
       const arg = args[index];
       if (arg === "--help" || arg === "-h") return { mode: "help" };
-      if (arg === "--secret-file" || arg === "--port" || arg === "--socket") {
+      if (arg === "--secret-file" || arg === "--port" || arg === "--socket" || arg === "--root") {
         const value = args[index + 1];
         if (!value) throw new Error(`${arg} needs a value`);
         if (arg === "--secret-file") secretFile = resolve(value);
         else if (arg === "--socket") socketPath = resolve(value);
+        else if (arg === "--root") root = resolve(value);
         else {
           port = Number(value);
           if (!Number.isInteger(port) || port < 1 || port > 65_535)
@@ -79,6 +83,8 @@ export function parseArgs(args: readonly string[]): Invocation {
         secretFile = resolve(arg.slice("--secret-file=".length));
       } else if (arg?.startsWith("--socket=")) {
         socketPath = resolve(arg.slice("--socket=".length));
+      } else if (arg?.startsWith("--root=")) {
+        root = resolve(arg.slice("--root=".length));
       } else if (arg?.startsWith("--port=")) {
         port = Number(arg.slice("--port=".length));
         if (!Number.isInteger(port) || port < 1 || port > 65_535)
@@ -86,7 +92,7 @@ export function parseArgs(args: readonly string[]): Invocation {
       } else throw new Error(`unknown webhook-daemon option: ${arg}`);
     }
     if (!secretFile) throw new Error("webhook-daemon needs --secret-file PATH");
-    return { mode: "webhook-daemon", secretFile, port, socketPath };
+    return { mode: "webhook-daemon", secretFile, port, socketPath, root };
   }
   let mode: Invocation["mode"] = "tui";
   let help = false;
@@ -150,11 +156,14 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
         secret,
         port: invocation.port,
         socketPath: invocation.socketPath,
+        root: invocation.root,
       });
       process.stderr.write(
         `agentsource: accepting GitHub webhooks at http://${daemon.host}:${daemon.port}/<owner>/<repo>\n` +
-          `agentsource: broadcasting deliveries at ${daemon.socketPath}\n`,
+          `agentsource: serving subscribed channels at ${daemon.socketPath}\n`,
       );
+      for (const diagnostic of daemon.diagnostics)
+        process.stderr.write(`agentsource: CI projection: ${diagnostic}\n`);
       let onInterrupt = (): void => undefined;
       let onTerminate = (): void => undefined;
       const signal = await new Promise<"SIGINT" | "SIGTERM">((resolveSignal) => {

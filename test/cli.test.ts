@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { parseArgs, resolveMode } from "../src/cli.ts";
 
 test("CLI parses one-shot formats and root options", () => {
@@ -28,12 +30,18 @@ test("CLI parses the webhook daemon without weakening its loopback-only listener
       "--port=9000",
       "--socket",
       "/tmp/agentsource.sock",
+      "--root",
+      "/tmp/code",
     ]),
   ).toEqual({
     mode: "webhook-daemon",
     secretFile: "/tmp/webhook-secret",
     port: 9000,
     socketPath: "/tmp/agentsource.sock",
+    root: "/tmp/code",
+  });
+  expect(parseArgs(["webhook-daemon", "--secret-file", "/tmp/webhook-secret"])).toMatchObject({
+    root: join(homedir(), "code"),
   });
   expect(() => parseArgs(["webhook-daemon"])).toThrow("needs --secret-file");
   expect(() =>

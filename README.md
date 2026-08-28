@@ -64,7 +64,8 @@ degraded workspace metadata. `--json` forces this output in a terminal;
 Agentsource can run a foreground webhook daemon for a process supervisor. Its
 HTTP listener is fixed to `127.0.0.1`; expose that listener to GitHub through
 Tailscale Funnel. Each correctly signed request to `/<owner>/<repo>` becomes
-one newline-delimited JSON webhook delivery on a private Unix socket.
+one webhook delivery available through a private Unix socket. Socket clients
+must subscribe before the daemon sends them anything.
 
 The installer creates one private secret when it is absent and preserves it on
 every later run. Keep it stable across the daemon and GitHub webhook
@@ -77,6 +78,11 @@ scripts/install.sh --install
 agentsource webhook-daemon \
   --secret-file ~/.config/agentsource/github-webhook-secret
 ```
+
+The daemon discovers registered GitHub projects directly below `~/code` and
+hydrates their CI projections using the current `gh` authentication. Pass
+`--root PATH` to choose a different project root. CI query failures are
+reported in projection diagnostics and do not stop webhook delivery.
 
 The secret-generation command refuses to overwrite an existing secret. Keep
 that file: replacing it requires promptly applying the new value to every
@@ -131,16 +137,33 @@ Reconciliation is deliberately scoped to GitHub projects currently found
 under the selected root. Removing a local project does not delete its remote
 hook; stale-hook inventory and explicit removal belong to a later slice.
 
-A cheap local client can watch the stream directly:
+A client sends exactly one newline-delimited subscription. `deliveries` is the
+live webhook delivery channel. Each `ci:<owner>:<repo>` channel is the complete
+current check/status projection for that project's remote default-branch HEAD;
+the terminal-star prefix `ci:*` selects every registered CI projection.
 
-```console
-nc -U ~/.local/state/agentsource/webhooks.sock | jq --unbuffered -c .
+```json
+{"schemaVersion":1,"subscribe":["deliveries","ci:*"]}
 ```
 
-The delivery record has `schemaVersion: 1`, `receivedAt`, `owner`, `repo`,
-`event`, `deliveryId`, `hookId`, and the parsed GitHub `payload`. The stream is
-live and best-effort: disconnected or slow clients can miss deliveries, and
-there is no persistence or replay in this slice.
+Every emitted NDJSON envelope has `schemaVersion`, `channel`, `emittedAt`, and
+`data`. A CI subscription immediately receives one complete envelope per
+matching registered project; later relevant webhooks refresh and emit only the
+affected project's projection. The `deliveries` channel has no replay.
+Prefixes may select the whole namespace (`ci:*`) or one owner's namespace
+(`ci:possibilities:*`); `*` selects every channel.
+
+Use the included client to try exact channels, prefixes, or both:
+
+```console
+scripts/watch-webhook-channels.ts 'ci:*'
+scripts/watch-webhook-channels.ts deliveries 'ci:*' | jq --unbuffered -c .
+```
+
+The socket and its parent directory are owner-only. There is no additional
+application token: local Unix identity is the socket authentication boundary.
+All channels are live and best-effort, so disconnected or slow clients can
+miss updates.
 
 Secret rotation is not atomic in this slice. Do not replace the shared secret
 while deliveries must remain uninterrupted; overlapping-secret rotation is a
