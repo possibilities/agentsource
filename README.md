@@ -6,7 +6,7 @@ Agentsource is a read-only Signal Room TUI for the Git projects directly under
 - working changes in any live checkout;
 - commits on local branches that no locally known remote branch contains; or
 - an additional linked worktree; or
-- an open Herdr agent or pane associated with its primary checkout or a linked
+- a supported Herdr agent associated with its primary checkout or a linked
   worktree; or
 - pending or failing CI on its primary branch or a linked worktree.
 
@@ -22,10 +22,11 @@ Agentsource takes one `herdr api snapshot` and one `herdr workspace list`
 snapshot per scan. It associates every recognized agent and every otherwise
 unoccupied open pane through its workspace's recorded checkout when available,
 then falls back to the most-specific known checkout containing its current
-directory. This keeps a stopped agent's pane visible until that pane closes,
-without inventing a fake agent identity. A pane that starts elsewhere and later
-creates a worktree cannot be attributed without Herdr recording that
-provenance, so Agentsource does not guess.
+directory. Only supported agents contribute live TUI presence, project
+visibility, and Herdr session totals. Plain panes remain machine-readable in
+JSON without masquerading as agents or drawing attention in the TUI. A pane
+that starts elsewhere and later creates a worktree cannot be attributed without
+Herdr recording that provenance, so Agentsource does not guess.
 
 Agentsource never fetches and never writes to a repository. Remote state means
 “as of the last fetch,” and untracked contents are not read merely to calculate

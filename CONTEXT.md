@@ -45,8 +45,9 @@ _Avoid_: agent ownership, inferred worktree author
 
 **Pane presence**
 An open Herdr pane without a currently recognized agent, deterministically
-associated by the same checkout rules as agent presence. It remains present
-until the pane closes and never masquerades as an agent.
+associated by the same checkout rules as agent presence. It remains available
+in the machine-readable observation until the pane closes, but never contributes
+TUI visibility or Herdr session totals and never masquerades as an agent.
 _Avoid_: stopped agent, shell agent
 
 **Webhook delivery**

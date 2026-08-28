@@ -45,7 +45,15 @@ const PROJECT: ProjectStatus = {
       focused: true,
     },
   ],
-  panes: [],
+  panes: [
+    {
+      paneId: "w1:p2",
+      tabId: "w1:t1",
+      workspaceId: "w1",
+      title: "idle shell",
+      focused: false,
+    },
+  ],
   worktrees: [
     {
       path: "/Users/example/.herdr/worktrees/project/worktree-long-name",
@@ -78,7 +86,15 @@ const PROJECT: ProjectStatus = {
           focused: false,
         },
       ],
-      panes: [],
+      panes: [
+        {
+          paneId: "w2:p2",
+          tabId: "w2:t1",
+          workspaceId: "w2",
+          title: "finished agent shell",
+          focused: false,
+        },
+      ],
       ci: {
         channel: "ci:example:project",
         state: "FAIL",
@@ -123,6 +139,9 @@ describe("responsive renderer", () => {
     expect(frame).toContain("DIVERGED FROM main · 3 ahead · 1 behind");
     expect(frame).toContain("codex WORKING");
     expect(frame).toContain("claude IDLE");
+    expect(frame).not.toContain("HERDR PANE");
+    expect(frame).not.toContain("idle shell");
+    expect(frame).not.toContain("finished agent shell");
     expect(frame).not.toContain("AGENTSOURCE");
     expect(frame).not.toContain("commands");
     expect(renderSnapshot(RESULT, 100)).toStartWith("AGENTSOURCE · /Users/example/code");

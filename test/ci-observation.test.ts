@@ -139,11 +139,14 @@ describe("CI observations", () => {
 
   test("an unavailable socket never presents retained projections as current", () => {
     const retained = project();
-    retained.panes.push({
+    retained.agents.push({
+      agent: "codex",
+      status: "idle",
+      conversation: null,
+      sessionId: null,
       paneId: "w1:p1",
       tabId: "w1:t1",
       workspaceId: "w1",
-      title: null,
       focused: false,
     });
     const observed = applyCiObservation(scan([retained]), {

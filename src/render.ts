@@ -3,7 +3,6 @@ import { GLYPHS, type TokenName } from "./tui/theme.ts";
 import {
   type AgentPresence,
   type CiState,
-  type HerdrPanePresence,
   OBSERVATION_SCHEMA_VERSION,
   type ProjectStatus,
   type ScanResult,
@@ -117,12 +116,8 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
         sum.agents +
         project.agents.length +
         project.worktrees.reduce((count, worktree) => count + worktree.agents.length, 0),
-      panes:
-        sum.panes +
-        project.panes.length +
-        project.worktrees.reduce((count, worktree) => count + worktree.panes.length, 0),
     }),
-    { worktrees: 0, workingFiles: 0, unpushedCommits: 0, agents: 0, panes: 0 },
+    { worktrees: 0, workingFiles: 0, unpushedCommits: 0, agents: 0 },
   );
   if (width >= 72) {
     const metrics = [
@@ -131,7 +126,7 @@ function renderObservationTotals(result: ScanResult, width: number): Line[] {
       totalMetric(totals.workingFiles, "WORKING FILE"),
       totalMetric(totals.unpushedCommits, "UNPUSHED COMMIT"),
     ];
-    if (width >= 92) metrics.push(totalMetric(totals.agents + totals.panes, "HERDR SESSION"));
+    if (width >= 92) metrics.push(totalMetric(totals.agents, "HERDR SESSION"));
     const line: Line = [span(GLYPHS.rail, "accent"), span(" ")];
     metrics.forEach((metric, index) => {
       if (index > 0) line.push(span(` ${GLYPHS.separator} `, "muted"));
@@ -216,18 +211,6 @@ function agentLine(agent: AgentPresence, width: number, indent: string): Line {
   );
   if (identity) line.push(span(` ${GLYPHS.separator} ${identity}`, "muted"));
   if (agent.focused) line.push(span(` ${GLYPHS.separator} FOCUSED`, "accent"));
-  return clipLine(line, width);
-}
-
-function paneLine(pane: HerdrPanePresence, width: number, indent: string): Line {
-  const line: Line = [
-    span(indent),
-    span(GLYPHS.idle, "muted"),
-    span(" HERDR PANE ", "text", true),
-    span("OPEN", "muted"),
-  ];
-  if (pane.title) line.push(span(` ${GLYPHS.separator} ${pane.title}`, "muted"));
-  if (pane.focused) line.push(span(` ${GLYPHS.separator} FOCUSED`, "accent"));
   return clipLine(line, width);
 }
 
@@ -343,7 +326,6 @@ function worktreeLines(worktree: WorktreeStatus, primary: string | null, width: 
       ];
   const lines = [clipLine(first, width)];
   for (const agent of worktree.agents) lines.push(agentLine(agent, width, "      "));
-  for (const pane of worktree.panes) lines.push(paneLine(pane, width, "      "));
   lines.push(workingLine(worktree.working, width, "      "));
   lines.push(clipLine(worktreeState(worktree, primary, compact), width));
   if (compact) lines.push(clipLine([span("      "), span(worktree.displayPath, "muted")], width));
@@ -359,10 +341,7 @@ export function renderProject(project: ProjectStatus, width: number): Line[] {
   const agents =
     project.agents.length +
     project.worktrees.reduce((count, worktree) => count + worktree.agents.length, 0);
-  const panes =
-    project.panes.length +
-    project.worktrees.reduce((count, worktree) => count + worktree.panes.length, 0);
-  const sessions = agents + panes;
+  const sessions = agents;
   const primary = project.primaryBranch ?? "PRIMARY ?";
   const summary: Line = [
     span(primary, project.primaryBranch ? "muted" : "danger"),
@@ -384,7 +363,6 @@ export function renderProject(project: ProjectStatus, width: number): Line[] {
   if (available >= 66)
     lines.push(clipLine([span("  "), span(project.displayPath, "muted")], available));
   for (const agent of project.agents) lines.push(agentLine(agent, available, "  "));
-  for (const pane of project.panes) lines.push(paneLine(pane, available, "  "));
   lines.push(workingLine(project.primaryWorking, available));
   lines.push(unpushedLine(project, available));
   for (const worktree of project.worktrees) {

@@ -226,7 +226,7 @@ test("scan aggregates a project and classifies its linked worktree against confi
   }
 });
 
-test("otherwise quiet projects remain observable while a Herdr agent or pane is present", async () => {
+test("otherwise quiet projects remain observable only while a supported Herdr agent is present", async () => {
   const fixture = mkdtempSync(join(tmpdir(), "agentsource-agent-only-"));
   try {
     const projects = join(fixture, "code");
@@ -278,7 +278,7 @@ test("otherwise quiet projects remain observable while a Herdr agent or pane is 
     });
 
     const result = await scanProjects({ root: projects, herdr });
-    expect(result.projects).toHaveLength(2);
+    expect(result.projects).toHaveLength(1);
     expect(result.projects.find((candidate) => candidate.name === "agent-only")).toMatchObject({
       name: "agent-only",
       primaryWorking: { files: 0 },
@@ -286,11 +286,7 @@ test("otherwise quiet projects remain observable while a Herdr agent or pane is 
       worktrees: [],
       agents: [{ agent: "codex", status: "idle", conversation: "quiet-project-work" }],
     });
-    expect(result.projects.find((candidate) => candidate.name === "pane-only")).toMatchObject({
-      name: "pane-only",
-      agents: [],
-      panes: [{ paneId: "w2:p1", title: "finished agent shell" }],
-    });
+    expect(result.projects.find((candidate) => candidate.name === "pane-only")).toBeUndefined();
     expect(result.agentPresence).toEqual({ available: true, diagnostics: [] });
   } finally {
     rmSync(fixture, { recursive: true, force: true });

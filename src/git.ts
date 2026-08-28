@@ -636,7 +636,6 @@ export function projectIsVisible(project: ProjectStatus): boolean {
     project.unpushed.commits > 0 ||
     project.worktrees.length > 0 ||
     project.agents.length > 0 ||
-    project.panes.length > 0 ||
     ciNeedsAttention
   );
 }
