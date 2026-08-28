@@ -43,6 +43,12 @@ A Herdr-reported agent deterministically associated with a primary checkout or
 linked worktree by workspace checkout metadata or by its current directory.
 _Avoid_: agent ownership, inferred worktree author
 
+**Pane presence**
+An open Herdr pane without a currently recognized agent, deterministically
+associated by the same checkout rules as agent presence. It remains present
+until the pane closes and never masquerades as an agent.
+_Avoid_: stopped agent, shell agent
+
 **Webhook delivery**
 One GitHub webhook request whose signature and project path agentsource has
 validated. Each delivery becomes one schema-versioned value on the delivery
@@ -67,10 +73,23 @@ client subscribes. It has no initial value or replay.
 _Avoid_: raw channel, firehose
 
 **CI projection**
-The complete current GitHub check and commit-status state for one registered
-project's remote default-branch HEAD. Its channel is `ci:<owner>:<repo>`;
-`ci:*` subscribes to every registered CI projection.
+The daemon-owned current GitHub check and commit-status state for one
+registered project's relevant Git heads, keyed by commit SHA and annotated
+with branch and checkout associations. Its channel is `ci:<owner>:<repo>`;
+`ci:*` selects every registered CI projection.
 _Avoid_: Actions channel, workflow history
+
+**CI state**
+The branch-facing normalization of a projected Git head: `PASS`, `PENDING`,
+`FAIL`, `NONE`, `LOCAL`, or `UNKNOWN`. `PENDING` and `FAIL` require attention;
+all states remain visible when their branch or checkout is visible.
+_Avoid_: workflow result, build badge
+
+**Projection snapshot**
+A bounded request for the daemon's current values matching exact channels or
+terminal-star prefixes. Cached projections are fresh by definition; the
+daemon constructs only requested registered projections absent from its cache.
+_Avoid_: replay, forced refresh
 
 **Registered project**
 A GitHub project discovered as a direct child of the webhook daemon's chosen

@@ -1,6 +1,8 @@
+import { type ChannelSubscriptionHandle, subscribeChannels } from "../channel-client.ts";
+import { applyCiObservation, projectionFromEnvelope } from "../ci-observation.ts";
 import { scanProjects } from "../git.ts";
 import { type Line, renderFailurePanel, renderScan } from "../render.ts";
-import type { ScanResult } from "../types.ts";
+import type { CiProjection, ScanResult } from "../types.ts";
 import { createCommandPalette } from "./palette.ts";
 import { GLYPHS, SIGNAL_ROOM } from "./theme.ts";
 
@@ -128,6 +130,11 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
   renderer.root.add(refreshChip);
 
   let observation: ScanResult | null = null;
+  let rawObservation: ScanResult | null = null;
+  const projections = new Map<string, CiProjection>();
+  let ciAvailable = false;
+  let ciDiagnostic = "CI socket unavailable: connecting";
+  let ciSubscription: ChannelSubscriptionHandle | null = null;
   let scanning = false;
   let closed = false;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -188,6 +195,8 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
       clearTimeout(refreshTimer);
       refreshTimer = undefined;
     }
+    ciSubscription?.close();
+    ciSubscription = null;
     renderer.off("resize", paint);
     renderer.keyInput.off("keypress", onKeypress);
     process.off("SIGTERM", shutdown);
@@ -224,6 +233,15 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
     renderer.requestRender();
   };
 
+  const joinCi = (): void => {
+    if (!rawObservation) return;
+    observation = applyCiObservation(rawObservation, {
+      available: ciAvailable,
+      projections: [...projections.values()],
+      diagnostics: ciAvailable ? [] : [ciDiagnostic],
+    });
+  };
+
   async function refresh(resetScroll = true): Promise<void> {
     if (scanning || closed) return;
     if (refreshTimer !== undefined) {
@@ -232,9 +250,13 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
     }
     scanning = true;
     paint();
-    const next = await scanProjects({ ...(options.root ? { root: options.root } : {}) });
+    const next = await scanProjects({
+      ...(options.root ? { root: options.root } : {}),
+      includeQuiet: true,
+    });
     if (closed) return;
-    observation = next;
+    rawObservation = next;
+    joinCi();
     scanning = false;
     if (resetScroll) scroll.scrollTop = 0;
     paint();
@@ -253,6 +275,25 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
   renderer.on("resize", paint);
   process.once("SIGTERM", shutdown);
   process.once("SIGHUP", shutdown);
+
+  ciSubscription = subscribeChannels({
+    channels: ["ci:*"],
+    onValue: (value) => {
+      const projection = projectionFromEnvelope(value);
+      if (!projection || closed) return;
+      projections.set(value.channel, projection);
+      joinCi();
+      paint();
+    },
+    onAvailability: (available, diagnostic) => {
+      if (closed) return;
+      ciAvailable = available;
+      if (!available) projections.clear();
+      if (diagnostic) ciDiagnostic = diagnostic;
+      joinCi();
+      paint();
+    },
+  });
 
   paint();
   void refresh();

@@ -26,8 +26,8 @@ const EMPTY_HERDR: HerdrRunner = async (args) => ({
   stdout: JSON.stringify({
     id: `cli:${args[0]}:list`,
     result:
-      args[0] === "agent"
-        ? { type: "agent_list", agents: [] }
+      args[0] === "api"
+        ? { type: "snapshot", snapshot: { panes: [] } }
         : { type: "workspace_list", workspaces: [] },
   }),
   stderr: "",
@@ -226,49 +226,70 @@ test("scan aggregates a project and classifies its linked worktree against confi
   }
 });
 
-test("an otherwise quiet project remains observable while a Herdr agent is present", async () => {
+test("otherwise quiet projects remain observable while a Herdr agent or pane is present", async () => {
   const fixture = mkdtempSync(join(tmpdir(), "agentsource-agent-only-"));
   try {
     const projects = join(fixture, "code");
     mkdirSync(projects);
     const project = createPushedProject(projects, "agent-only");
+    const paneProject = createPushedProject(projects, "pane-only");
     const herdr: HerdrRunner = async (args) => ({
       code: 0,
       stdout: JSON.stringify({
         id: `cli:${args[0]}:list`,
         result:
-          args[0] === "agent"
+          args[0] === "api"
             ? {
-                type: "agent_list",
-                agents: [
-                  {
-                    agent: "codex",
-                    agent_status: "idle",
-                    cwd: project,
-                    focused: false,
-                    pane_id: "w1:p1",
-                    tab_id: "w1:t1",
-                    workspace_id: "w1",
-                    tokens: { conversation: "quiet-project-work" },
-                  },
-                ],
+                type: "snapshot",
+                snapshot: {
+                  panes: [
+                    {
+                      agent: "codex",
+                      agent_status: "idle",
+                      cwd: project,
+                      focused: false,
+                      pane_id: "w1:p1",
+                      tab_id: "w1:t1",
+                      workspace_id: "w1",
+                      tokens: { conversation: "quiet-project-work" },
+                    },
+                    {
+                      agent: null,
+                      agent_status: "unknown",
+                      cwd: paneProject,
+                      focused: false,
+                      pane_id: "w2:p1",
+                      tab_id: "w2:t1",
+                      workspace_id: "w2",
+                      terminal_title_stripped: "finished agent shell",
+                    },
+                  ],
+                },
               }
             : {
                 type: "workspace_list",
-                workspaces: [{ workspace_id: "w1", worktree: { checkout_path: project } }],
+                workspaces: [
+                  { workspace_id: "w1", worktree: { checkout_path: project } },
+                  { workspace_id: "w2", worktree: { checkout_path: paneProject } },
+                ],
               },
       }),
       stderr: "",
     });
 
     const result = await scanProjects({ root: projects, herdr });
-    expect(result.projects).toHaveLength(1);
-    expect(result.projects[0]).toMatchObject({
+    expect(result.projects).toHaveLength(2);
+    expect(result.projects.find((candidate) => candidate.name === "agent-only")).toMatchObject({
       name: "agent-only",
       primaryWorking: { files: 0 },
       unpushed: { commits: 0 },
       worktrees: [],
       agents: [{ agent: "codex", status: "idle", conversation: "quiet-project-work" }],
+    });
+    expect(result.projects.find((candidate) => candidate.name === "pane-only")).toMatchObject({
+      name: "pane-only",
+      agents: [],
+      panes: [{ paneId: "w2:p1", title: "finished agent shell" }],
     });
     expect(result.agentPresence).toEqual({ available: true, diagnostics: [] });
   } finally {

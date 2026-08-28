@@ -18,6 +18,8 @@ import { type CiProjectionStore, ciChannel, createCiProjectionStore } from "./gi
 import {
   CHANNEL_PROTOCOL_SCHEMA_VERSION,
   type ChannelEnvelope,
+  type ChannelSnapshotRequest,
+  type ChannelSnapshotResponse,
   type ChannelSubscription,
   WEBHOOK_DELIVERY_SCHEMA_VERSION,
   type WebhookDelivery,
@@ -64,6 +66,7 @@ interface ChannelClient {
   backpressured: boolean;
   subscription: string[] | null;
   input: string;
+  handling: boolean;
 }
 
 class BodyTooLargeError extends Error {}
@@ -74,25 +77,13 @@ interface BodyBudget {
   release: (bytes: number) => void;
 }
 
-function parseSubscription(line: string): ChannelSubscription | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(line) as unknown;
-  } catch {
-    return null;
-  }
-  if (typeof value !== "object" || value === null) return null;
-  const schemaVersion = Reflect.get(value, "schemaVersion");
-  const subscribe = Reflect.get(value, "subscribe");
-  if (
-    schemaVersion !== CHANNEL_PROTOCOL_SCHEMA_VERSION ||
-    !Array.isArray(subscribe) ||
-    subscribe.length < 1 ||
-    subscribe.length > MAX_SUBSCRIPTION_PATTERNS
-  )
+type ChannelRequest = ChannelSubscription | ChannelSnapshotRequest;
+
+function validChannelPatterns(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_SUBSCRIPTION_PATTERNS)
     return null;
   const patterns = new Set<string>();
-  for (const candidate of subscribe) {
+  for (const candidate of value) {
     if (typeof candidate !== "string" || candidate !== candidate.toLowerCase()) return null;
     if (
       candidate !== "deliveries" &&
@@ -103,7 +94,33 @@ function parseSubscription(line: string): ChannelSubscription | null {
       return null;
     patterns.add(candidate);
   }
-  return { schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION, subscribe: [...patterns] };
+  return [...patterns];
+}
+
+function parseChannelRequest(line: string): ChannelRequest | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(line) as unknown;
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const schemaVersion = Reflect.get(value, "schemaVersion");
+  if (schemaVersion !== CHANNEL_PROTOCOL_SCHEMA_VERSION) return null;
+  if (Reflect.get(value, "method") === "snapshot") {
+    const requestId = Reflect.get(value, "requestId");
+    const channels = validChannelPatterns(Reflect.get(value, "channels"));
+    if (typeof requestId !== "string" || requestId === "" || requestId.length > 256 || !channels)
+      return null;
+    return {
+      schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
+      requestId,
+      method: "snapshot",
+      channels,
+    };
+  }
+  const subscribe = validChannelPatterns(Reflect.get(value, "subscribe"));
+  return subscribe ? { schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION, subscribe } : null;
 }
 
 function subscriptionMatches(patterns: readonly string[], channel: string): boolean {
@@ -395,6 +412,13 @@ export async function startWebhookDaemon(
     }));
   const clients = new Set<ChannelClient>();
 
+  const envelope = (channel: string, data: unknown): ChannelEnvelope => ({
+    schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
+    channel,
+    emittedAt: now().toISOString(),
+    data,
+  });
+
   const send = (
     client: ChannelClient,
     channel: string,
@@ -406,13 +430,8 @@ export async function startWebhookDaemon(
       client.socket.destroy();
       return;
     }
-    const envelope: ChannelEnvelope = {
-      schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
-      channel,
-      emittedAt: now().toISOString(),
-      data,
-    };
-    if (!client.socket.write(`${JSON.stringify(envelope)}\n`)) client.backpressured = true;
+    if (!client.socket.write(`${JSON.stringify(envelope(channel, data))}\n`))
+      client.backpressured = true;
   };
 
   const broadcast = (channel: string, data: unknown): void => {
@@ -425,6 +444,7 @@ export async function startWebhookDaemon(
       backpressured: false,
       subscription: null,
       input: "",
+      handling: false,
     };
     clients.add(state);
     client.setNoDelay(true);
@@ -435,7 +455,7 @@ export async function startWebhookDaemon(
       state.backpressured = false;
     });
     client.on("data", (chunk: string) => {
-      if (state.subscription) {
+      if (state.subscription || state.handling) {
         client.destroy();
         return;
       }
@@ -450,16 +470,39 @@ export async function startWebhookDaemon(
         client.destroy();
         return;
       }
-      const subscription = parseSubscription(state.input.slice(0, newline));
-      if (!subscription) {
+      const request = parseChannelRequest(state.input.slice(0, newline));
+      if (!request) {
         client.destroy();
         return;
       }
-      state.subscription = subscription.subscribe;
       state.input = "";
+      state.handling = true;
       client.setTimeout(0);
-      for (const projection of ciStore.list())
-        send(state, ciChannel(projection.owner, projection.repo), projection, true);
+      void ciStore
+        .snapshot("method" in request ? request.channels : request.subscribe)
+        .then((projections) => {
+          if (client.destroyed) return;
+          if ("method" in request) {
+            const values = projections.map((projection) =>
+              envelope(ciChannel(projection.owner, projection.repo), projection),
+            );
+            const response: ChannelSnapshotResponse = {
+              schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
+              requestId: request.requestId,
+              ok: true,
+              values,
+            };
+            client.end(`${JSON.stringify(response)}\n`);
+            return;
+          }
+          state.subscription = request.subscribe;
+          for (const projection of projections)
+            send(state, ciChannel(projection.owner, projection.repo), projection, true);
+        })
+        .catch(() => client.destroy())
+        .finally(() => {
+          state.handling = false;
+        });
     });
     client.on("close", () => clients.delete(state));
   });

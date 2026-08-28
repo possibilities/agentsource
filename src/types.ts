@@ -30,6 +30,14 @@ export interface AgentPresence {
   focused: boolean;
 }
 
+export interface HerdrPanePresence {
+  paneId: string;
+  tabId: string;
+  workspaceId: string;
+  title: string | null;
+  focused: boolean;
+}
+
 export interface AgentPresenceObservation {
   available: boolean;
   diagnostics: string[];
@@ -46,6 +54,8 @@ export interface WorktreeStatus {
   mergeState: MergeState;
   issue: string | null;
   agents: AgentPresence[];
+  panes: HerdrPanePresence[];
+  ci: CiSummary | null;
 }
 
 export interface ProjectStatus {
@@ -53,22 +63,32 @@ export interface ProjectStatus {
   path: string;
   displayPath: string;
   primaryBranch: string | null;
+  primaryHead: string | null;
   primaryWorking: WorkingStats;
   unpushed: UnpushedStats;
   agents: AgentPresence[];
+  panes: HerdrPanePresence[];
   worktrees: WorktreeStatus[];
   issues: string[];
+  primaryCi: CiSummary | null;
+}
+
+export interface CiObservation {
+  available: boolean;
+  projections: CiProjection[];
+  diagnostics: string[];
 }
 
 export interface ScanResult {
   root: string;
   projects: ProjectStatus[];
   agentPresence: AgentPresenceObservation;
+  ci: CiObservation;
   diagnostics: string[];
   scannedAt: Date;
 }
 
-export const OBSERVATION_SCHEMA_VERSION = 2 as const;
+export const OBSERVATION_SCHEMA_VERSION = 3 as const;
 
 /** Stable machine-readable form of a point-in-time scan. */
 export interface SerializedObservation {
@@ -77,6 +97,7 @@ export interface SerializedObservation {
   root: string;
   projects: ProjectStatus[];
   agentPresence: AgentPresenceObservation;
+  ci: CiObservation;
   diagnostics: string[];
 }
 
@@ -102,6 +123,13 @@ export interface ChannelSubscription {
   subscribe: string[];
 }
 
+export interface ChannelSnapshotRequest {
+  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
+  requestId: string;
+  method: "snapshot";
+  channels: string[];
+}
+
 /** One value emitted on a subscribed Unix-socket channel. */
 export interface ChannelEnvelope<T = unknown> {
   schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
@@ -110,7 +138,14 @@ export interface ChannelEnvelope<T = unknown> {
   data: T;
 }
 
-export const CI_PROJECTION_SCHEMA_VERSION = 1 as const;
+export interface ChannelSnapshotResponse {
+  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
+  requestId: string;
+  ok: true;
+  values: ChannelEnvelope[];
+}
+
+export const CI_PROJECTION_SCHEMA_VERSION = 2 as const;
 
 export type CiAggregateState =
   | "ERROR"
@@ -119,7 +154,10 @@ export type CiAggregateState =
   | "PENDING"
   | "SUCCESS"
   | "NONE"
+  | "LOCAL"
   | "UNAVAILABLE";
+
+export type CiState = "PASS" | "PENDING" | "FAIL" | "NONE" | "LOCAL" | "UNKNOWN";
 
 export interface CiCheckRun {
   kind: "check-run";
@@ -143,7 +181,38 @@ export interface CiStatusContext {
 
 export type CiContext = CiCheckRun | CiStatusContext;
 
-/** Complete current CI state for one registered project's default-branch HEAD. */
+export interface CiHead {
+  sha: string;
+  committedAt: string | null;
+  aggregateState: CiAggregateState;
+  contexts: CiContext[];
+  diagnostics: string[];
+}
+
+export interface CiBranchTarget {
+  kind: "branch";
+  branch: string;
+  role: "primary" | "default";
+  headSha: string | null;
+}
+
+export interface CiCheckoutTarget {
+  kind: "checkout";
+  path: string;
+  branch: string | null;
+  headSha: string;
+}
+
+export type CiTarget = CiBranchTarget | CiCheckoutTarget;
+
+export interface CiSummary {
+  channel: string;
+  state: CiState;
+  headSha: string | null;
+  aggregateState: CiAggregateState | null;
+}
+
+/** Complete current CI state for one registered project's relevant Git heads. */
 export interface CiProjection {
   schemaVersion: typeof CI_PROJECTION_SCHEMA_VERSION;
   revision: number;
@@ -153,9 +222,8 @@ export interface CiProjection {
   paths: string[];
   available: boolean;
   defaultBranch: string | null;
-  headSha: string | null;
-  headCommittedAt: string | null;
-  aggregateState: CiAggregateState;
-  contexts: CiContext[];
+  primaryBranch: string;
+  heads: CiHead[];
+  targets: CiTarget[];
   diagnostics: string[];
 }

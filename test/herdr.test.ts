@@ -4,6 +4,7 @@ import {
   type HerdrRunner,
   type HerdrSnapshot,
   parseHerdrAgents,
+  parseHerdrApiSnapshot,
   parseHerdrWorkspaces,
   readHerdrSnapshot,
 } from "../src/herdr.ts";
@@ -17,12 +18,21 @@ function envelope(kind: "agent" | "workspace", values: unknown[]): string {
   });
 }
 
+function apiSnapshot(panes: unknown[]): string {
+  return JSON.stringify({
+    id: "cli:api:snapshot",
+    result: { type: "snapshot", snapshot: { panes } },
+  });
+}
+
 function project(): ProjectStatus {
   return {
     name: "project",
     path: "/tmp/code/project",
     displayPath: "/tmp/code/project",
     primaryBranch: "main",
+    primaryHead: "primary",
+    primaryCi: null,
     primaryWorking: {
       files: 0,
       additions: 0,
@@ -35,6 +45,7 @@ function project(): ProjectStatus {
     },
     unpushed: { commits: 0, files: 0, additions: 0, deletions: 0, binary: 0 },
     agents: [],
+    panes: [],
     worktrees: [
       {
         path: "/tmp/code/project/nested-worktree",
@@ -56,6 +67,8 @@ function project(): ProjectStatus {
         mergeState: "unmerged",
         issue: null,
         agents: [],
+        panes: [],
+        ci: null,
       },
     ],
     issues: [],
@@ -94,6 +107,32 @@ describe("Herdr snapshots", () => {
       },
     ]);
     expect(
+      parseHerdrApiSnapshot(
+        apiSnapshot([
+          {
+            agent: null,
+            agent_status: "unknown",
+            cwd: "/tmp/project",
+            foreground_cwd: "/tmp/project/src",
+            focused: false,
+            pane_id: "w2:p1",
+            tab_id: "w2:t1",
+            workspace_id: "w2",
+            terminal_title_stripped: "shell",
+          },
+        ]),
+      ).panes,
+    ).toEqual([
+      {
+        cwd: "/tmp/project/src",
+        paneId: "w2:p1",
+        tabId: "w2:t1",
+        workspaceId: "w2",
+        title: "shell",
+        focused: false,
+      },
+    ]);
+    expect(
       parseHerdrWorkspaces(
         envelope("workspace", [
           { workspace_id: "w1", worktree: { checkout_path: "/tmp/project" } },
@@ -110,16 +149,24 @@ describe("Herdr snapshots", () => {
     const calls: string[] = [];
     const runner: HerdrRunner = async (args) => {
       calls.push(args.join(" "));
-      if (args[0] === "agent") {
+      if (args[0] === "api") {
         return {
           code: 0,
-          stdout: envelope("agent", [
+          stdout: apiSnapshot([
             {
               agent: "codex",
               agent_status: "idle",
               cwd: "/tmp/project",
               focused: false,
               pane_id: "w1:p1",
+              tab_id: "w1:t1",
+              workspace_id: "w1",
+            },
+            {
+              agent: null,
+              cwd: "/tmp/project",
+              focused: false,
+              pane_id: "w1:p2",
               tab_id: "w1:t1",
               workspace_id: "w1",
             },
@@ -130,9 +177,10 @@ describe("Herdr snapshots", () => {
       return { code: 1, stdout: "", stderr: "surface unavailable" };
     };
     const snapshot = await readHerdrSnapshot(runner);
-    expect(calls.sort()).toEqual(["agent list", "workspace list"]);
+    expect(calls.sort()).toEqual(["api snapshot", "workspace list"]);
     expect(snapshot.available).toBe(true);
     expect(snapshot.agents).toHaveLength(1);
+    expect(snapshot.panes).toHaveLength(1);
     expect(snapshot.workspaces).toEqual([]);
     expect(snapshot.diagnostics).toEqual(["herdr workspace list exited 1: surface unavailable"]);
   });
@@ -169,6 +217,16 @@ describe("Herdr snapshots", () => {
           workspaceId: "unrelated",
         },
       ],
+      panes: [
+        {
+          cwd: null,
+          paneId: "open-pane",
+          tabId: "w:t",
+          workspaceId: "linked",
+          title: null,
+          focused: false,
+        },
+      ],
       workspaces: [{ workspaceId: "linked", checkoutPath: observed.worktrees[0]?.path ?? null }],
       diagnostics: [],
     };
@@ -178,15 +236,16 @@ describe("Herdr snapshots", () => {
       "cwd-fallback",
       "workspace-wins",
     ]);
+    expect(observed.worktrees[0]?.panes.map((pane) => pane.paneId)).toEqual(["open-pane"]);
   });
 
-  test("malformed agent output is unavailable rather than partial", async () => {
+  test("malformed pane output is unavailable rather than partial", async () => {
     const snapshot = await readHerdrSnapshot(async (args) => ({
       code: 0,
-      stdout: args[0] === "agent" ? "{}" : envelope("workspace", []),
+      stdout: args[0] === "api" ? "{}" : envelope("workspace", []),
       stderr: "",
     }));
-    expect(snapshot).toMatchObject({ available: false, agents: [], workspaces: [] });
-    expect(snapshot.diagnostics[0]).toContain("omitted agents");
+    expect(snapshot).toMatchObject({ available: false, agents: [], panes: [], workspaces: [] });
+    expect(snapshot.diagnostics[0]).toContain("omitted panes");
   });
 });

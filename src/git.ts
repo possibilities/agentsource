@@ -489,6 +489,7 @@ async function resolvePrimary(
 ): Promise<{
   branch: string | null;
   ref: string | null;
+  head: string | null;
   issue: string | null;
 }> {
   const configured = await git(path, ["config", "--get", "supervisor.trunk"]);
@@ -497,9 +498,17 @@ async function resolvePrimary(
   const ref = `refs/heads/${branch}`;
   const exists = await git(path, ["show-ref", "--verify", "--quiet", ref]);
   if (exists.code !== 0) {
-    return { branch: null, ref: null, issue: `primary branch ${branch} does not exist` };
+    return {
+      branch: null,
+      ref: null,
+      head: null,
+      issue: `primary branch ${branch} does not exist`,
+    };
   }
-  return { branch, ref, issue: null };
+  const head = await git(path, ["rev-parse", ref]);
+  if (head.code !== 0 || head.stdout.trim() === "")
+    return { branch, ref, head: null, issue: `primary branch ${branch} HEAD is unreadable` };
+  return { branch, ref, head: head.stdout.trim(), issue: null };
 }
 
 async function inspectLinkedWorktree(
@@ -522,6 +531,8 @@ async function inspectLinkedWorktree(
       mergeState: "unknown",
       issue,
       agents: [],
+      panes: [],
+      ci: null,
     };
   }
   const [counts, contained] = await Promise.all([
@@ -548,6 +559,8 @@ async function inspectLinkedWorktree(
         ? counts.stderr.trim() || contained.stderr.trim() || "could not compare with primary branch"
         : null),
     agents: [],
+    panes: [],
+    ci: null,
   };
 }
 
@@ -590,11 +603,14 @@ async function inspectProject(
       path: entry.path,
       displayPath: displayPath(entry.path),
       primaryBranch: primary.branch,
+      primaryHead: primary.head,
       primaryWorking: aggregateWorking(primarySnapshot ? [primarySnapshot] : []),
       unpushed: unpushed.stats,
       agents: [],
+      panes: [],
       worktrees: worktrees.sort((left, right) => left.displayPath.localeCompare(right.displayPath)),
       issues,
+      primaryCi: null,
     },
     diagnostics,
   };
@@ -604,6 +620,25 @@ export interface ScanOptions {
   root?: string;
   git?: GitRunner;
   herdr?: HerdrRunner;
+  includeQuiet?: boolean;
+}
+
+export function projectIsVisible(project: ProjectStatus): boolean {
+  const ciNeedsAttention =
+    project.primaryCi?.state === "PENDING" ||
+    project.primaryCi?.state === "FAIL" ||
+    project.worktrees.some(
+      (worktree) => worktree.ci?.state === "PENDING" || worktree.ci?.state === "FAIL",
+    );
+  return (
+    project.primaryWorking.files > 0 ||
+    project.worktrees.some((worktree) => worktree.working.files > 0) ||
+    project.unpushed.commits > 0 ||
+    project.worktrees.length > 0 ||
+    project.agents.length > 0 ||
+    project.panes.length > 0 ||
+    ciNeedsAttention
+  );
 }
 
 /** Scan direct projects under ~/code. The operation is entirely read-only. */
@@ -623,6 +658,7 @@ export async function scanProjects(options: ScanOptions = {}): Promise<ScanResul
         available: presence.available,
         diagnostics: presence.diagnostics,
       },
+      ci: { available: false, projections: [], diagnostics: ["CI projection not requested"] },
       diagnostics: [error instanceof Error ? error.message : String(error)],
       scannedAt: new Date(),
     };
@@ -636,19 +672,13 @@ export async function scanProjects(options: ScanOptions = {}): Promise<ScanResul
   return {
     root,
     projects: projects
-      .filter(
-        (project) =>
-          project.primaryWorking.files > 0 ||
-          project.worktrees.some((worktree) => worktree.working.files > 0) ||
-          project.unpushed.commits > 0 ||
-          project.worktrees.length > 0 ||
-          project.agents.length > 0,
-      )
+      .filter((project) => options.includeQuiet === true || projectIsVisible(project))
       .sort((left, right) => left.name.localeCompare(right.name)),
     agentPresence: {
       available: presence.available,
       diagnostics: presence.diagnostics,
     },
+    ci: { available: false, projections: [], diagnostics: ["CI projection not requested"] },
     diagnostics: inspected.flatMap(({ diagnostics }) => diagnostics),
     scannedAt: new Date(),
   };

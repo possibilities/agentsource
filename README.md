@@ -6,7 +6,9 @@ Agentsource is a read-only Signal Room TUI for the Git projects directly under
 - working changes in any live checkout;
 - commits on local branches that no locally known remote branch contains; or
 - an additional linked worktree; or
-- a Herdr agent associated with its primary checkout or a linked worktree.
+- an open Herdr agent or pane associated with its primary checkout or a linked
+  worktree; or
+- pending or failing CI on its primary branch or a linked worktree.
 
 Working statistics belong only to the checkout that contains them: the primary
 checkout has its own statistics, and every linked worktree reports its own
@@ -16,11 +18,13 @@ observation-wide total is derived from those checkout-local records rather than
 stored again on each project. The primary branch is `supervisor.trunk` when
 configured and `main` otherwise.
 
-Agentsource takes one `herdr agent list` and one `herdr workspace list`
-snapshot per scan. It associates an agent through its workspace's recorded
-checkout when available, then falls back to the most-specific known checkout
-containing the agent's current directory. An agent that starts elsewhere and
-later creates a worktree cannot be attributed without Herdr recording that
+Agentsource takes one `herdr api snapshot` and one `herdr workspace list`
+snapshot per scan. It associates every recognized agent and every otherwise
+unoccupied open pane through its workspace's recorded checkout when available,
+then falls back to the most-specific known checkout containing its current
+directory. This keeps a stopped agent's pane visible until that pane closes,
+without inventing a fake agent identity. A pane that starts elsewhere and later
+creates a worktree cannot be attributed without Herdr recording that
 provenance, so Agentsource does not guess.
 
 Agentsource never fetches and never writes to a repository. Remote state means
@@ -50,14 +54,23 @@ scripts/install.sh --install
 scripts/install.sh --uninstall
 ```
 
-The JSON document has `schemaVersion: 2` and contains `scannedAt`, `root`,
-`projects`, `agentPresence`, and `diagnostics`. Each project and linked
-worktree has an `agents` array; normalized entries include harness and status,
+The JSON document has `schemaVersion: 3` and contains `scannedAt`, `root`,
+`projects`, `agentPresence`, `ci`, and `diagnostics`. Each project and linked
+worktree has `agents` and `panes` arrays. Normalized agent entries include harness and status,
 conversation and session identity when available, Herdr pane/tab/workspace
-identifiers, and focus state. `agentPresence.available` distinguishes an empty
-agent snapshot from an unavailable Herdr surface, while its diagnostics record
-degraded workspace metadata. `--json` forces this output in a terminal;
+identifiers, and focus state. Pane entries retain pane/tab/workspace identity,
+title, and focus state after an agent exits. `agentPresence.available`
+distinguishes an empty snapshot from an unavailable Herdr surface, while its
+diagnostics record degraded workspace metadata. `--json` forces this output in a terminal;
 `--snapshot` forces the plain-text form in any environment.
+
+Every visible primary branch and linked-worktree branch also has a normalized
+CI summary: `PASS`, `PENDING`, `FAIL`, `NONE`, `LOCAL`, or `UNKNOWN`. The
+top-level `ci.projections` array retains the complete daemon projections used
+to derive those summaries. One-shot observations obtain them through the Unix
+socket snapshot RPC; agentsource never queries GitHub from the observation
+process. If the daemon is unavailable, Git and Herdr observation still
+succeeds with CI availability diagnostics.
 
 ## GitHub webhook wiring
 
@@ -79,10 +92,13 @@ agentsource webhook-daemon \
   --secret-file ~/.config/agentsource/github-webhook-secret
 ```
 
-The daemon discovers registered GitHub projects directly below `~/code` and
-hydrates their CI projections using the current `gh` authentication. Pass
-`--root PATH` to choose a different project root. CI query failures are
-reported in projection diagnostics and do not stop webhook delivery.
+The daemon discovers registered GitHub projects directly below `~/code` at
+startup, but does not query GitHub until a client first requests a missing CI
+projection. A cached projection is authoritative regardless of age; later
+snapshot requests return it without another GitHub call. Relevant webhooks
+refresh the affected projection. Pass `--root PATH` to choose a different
+project root. CI query failures are reported in projection diagnostics and do
+not stop webhook delivery.
 
 The secret-generation command refuses to overwrite an existing secret. Keep
 that file: replacing it requires promptly applying the new value to every
@@ -139,7 +155,8 @@ hook; stale-hook inventory and explicit removal belong to a later slice.
 
 A client sends exactly one newline-delimited subscription. `deliveries` is the
 live webhook delivery channel. Each `ci:<owner>:<repo>` channel is the complete
-current check/status projection for that project's remote default-branch HEAD;
+current check/status projection for that project's relevant Git heads,
+including its configured primary branch and live local worktree HEADs;
 the terminal-star prefix `ci:*` selects every registered CI projection.
 
 ```json
@@ -153,10 +170,19 @@ affected project's projection. The `deliveries` channel has no replay.
 Prefixes may select the whole namespace (`ci:*`) or one owner's namespace
 (`ci:possibilities:*`); `*` selects every channel.
 
+For one-shot consumers, send a snapshot request instead of a subscription. The
+daemon hydrates only matching missing projections, returns their current
+envelopes in one response, and closes the connection:
+
+```json
+{"schemaVersion":1,"requestId":"observation-1","method":"snapshot","channels":["ci:*"]}
+```
+
 Use the included client to try exact channels, prefixes, or both:
 
 ```console
 scripts/watch-webhook-channels.ts 'ci:*'
+scripts/watch-webhook-channels.ts --snapshot 'ci:*'
 scripts/watch-webhook-channels.ts deliveries 'ci:*' | jq --unbuffered -c .
 ```
 

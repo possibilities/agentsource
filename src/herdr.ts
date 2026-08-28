@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { AgentPresence, ProjectStatus } from "./types.ts";
+import type { AgentPresence, HerdrPanePresence, ProjectStatus } from "./types.ts";
 
 export interface HerdrResult {
   code: number;
@@ -15,6 +15,10 @@ interface HerdrAgent extends AgentPresence {
   cwd: string | null;
 }
 
+interface HerdrPane extends HerdrPanePresence {
+  cwd: string | null;
+}
+
 interface HerdrWorkspace {
   workspaceId: string;
   checkoutPath: string | null;
@@ -23,6 +27,7 @@ interface HerdrWorkspace {
 export interface HerdrSnapshot {
   available: boolean;
   agents: HerdrAgent[];
+  panes: HerdrPane[];
   workspaces: HerdrWorkspace[];
   diagnostics: string[];
 }
@@ -59,13 +64,17 @@ function parseEnvelope(output: string, kind: string, key: string): unknown[] {
 }
 
 export function parseHerdrAgents(output: string): HerdrAgent[] {
-  return parseEnvelope(output, "agent", "agents").map((value, index) => {
+  return parseAgentValues(parseEnvelope(output, "agent", "agents"));
+}
+
+function parseAgentValues(values: unknown[]): HerdrAgent[] {
+  return values.map((value, index) => {
     const item = record(value);
-    if (!item) throw new Error(`herdr agent list has an invalid agent at index ${index}`);
+    if (!item) throw new Error(`herdr snapshot has an invalid agent at index ${index}`);
     const session = record(item.agent_session);
     const tokens = record(item.tokens);
     if (typeof item.focused !== "boolean") {
-      throw new Error(`herdr agent list agent ${index} omitted focused`);
+      throw new Error(`herdr snapshot agent ${index} omitted focused`);
     }
     return {
       agent: optionalString(item.agent) ?? optionalString(item.display_agent) ?? "unknown",
@@ -79,6 +88,44 @@ export function parseHerdrAgents(output: string): HerdrAgent[] {
       focused: item.focused,
     };
   });
+}
+
+export function parseHerdrApiSnapshot(output: string): {
+  agents: HerdrAgent[];
+  panes: HerdrPane[];
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("herdr api snapshot returned invalid JSON");
+  }
+  const snapshot = record(record(record(parsed)?.result)?.snapshot);
+  if (!snapshot || !Array.isArray(snapshot.panes))
+    throw new Error("herdr api snapshot omitted panes");
+  const hasAgent = (value: unknown): boolean => {
+    const item = record(value);
+    return Boolean(optionalString(item?.agent) ?? optionalString(item?.display_agent));
+  };
+  const agentValues = snapshot.panes.filter(hasAgent);
+  const panes = snapshot.panes.flatMap((value, index) => {
+    const item = record(value);
+    if (!item) throw new Error(`herdr api snapshot has an invalid pane at index ${index}`);
+    if (hasAgent(item)) return [];
+    if (typeof item.focused !== "boolean")
+      throw new Error(`herdr api snapshot pane ${index} omitted focused`);
+    return [
+      {
+        cwd: optionalString(item.foreground_cwd) ?? optionalString(item.cwd),
+        paneId: requiredString(item.pane_id, `pane ${index} pane_id`),
+        tabId: requiredString(item.tab_id, `pane ${index} tab_id`),
+        workspaceId: requiredString(item.workspace_id, `pane ${index} workspace_id`),
+        title: optionalString(item.terminal_title_stripped),
+        focused: item.focused,
+      },
+    ];
+  });
+  return { agents: parseAgentValues(agentValues), panes };
 }
 
 export function parseHerdrWorkspaces(output: string): HerdrWorkspace[] {
@@ -135,25 +182,27 @@ function failedCommand(kind: string, result: HerdrResult): string {
 
 /** Take one bounded Herdr snapshot, degrading workspace metadata to cwd matching. */
 export async function readHerdrSnapshot(runner: HerdrRunner = runHerdr): Promise<HerdrSnapshot> {
-  const [agentsResult, workspacesResult] = await Promise.all([
-    runner(["agent", "list"]),
+  const [snapshotResult, workspacesResult] = await Promise.all([
+    runner(["api", "snapshot"]),
     runner(["workspace", "list"]),
   ]);
-  if (agentsResult.code !== 0) {
+  if (snapshotResult.code !== 0) {
     return {
       available: false,
       agents: [],
+      panes: [],
       workspaces: [],
-      diagnostics: [failedCommand("agent", agentsResult)],
+      diagnostics: [failedCommand("api snapshot", snapshotResult)],
     };
   }
-  let agents: HerdrAgent[];
+  let snapshot: { agents: HerdrAgent[]; panes: HerdrPane[] };
   try {
-    agents = parseHerdrAgents(agentsResult.stdout);
+    snapshot = parseHerdrApiSnapshot(snapshotResult.stdout);
   } catch (error) {
     return {
       available: false,
       agents: [],
+      panes: [],
       workspaces: [],
       diagnostics: [error instanceof Error ? error.message : String(error)],
     };
@@ -161,7 +210,8 @@ export async function readHerdrSnapshot(runner: HerdrRunner = runHerdr): Promise
   if (workspacesResult.code !== 0) {
     return {
       available: true,
-      agents,
+      agents: snapshot.agents,
+      panes: snapshot.panes,
       workspaces: [],
       diagnostics: [failedCommand("workspace", workspacesResult)],
     };
@@ -169,14 +219,16 @@ export async function readHerdrSnapshot(runner: HerdrRunner = runHerdr): Promise
   try {
     return {
       available: true,
-      agents,
+      agents: snapshot.agents,
+      panes: snapshot.panes,
       workspaces: parseHerdrWorkspaces(workspacesResult.stdout),
       diagnostics: [],
     };
   } catch (error) {
     return {
       available: true,
-      agents,
+      agents: snapshot.agents,
+      panes: snapshot.panes,
       workspaces: [],
       diagnostics: [error instanceof Error ? error.message : String(error)],
     };
@@ -205,14 +257,25 @@ function compareAgents(left: AgentPresence, right: AgentPresence): number {
   );
 }
 
+function comparePanes(left: HerdrPanePresence, right: HerdrPanePresence): number {
+  if (left.focused !== right.focused) return left.focused ? -1 : 1;
+  return (
+    (left.title ?? "").localeCompare(right.title ?? "") || left.paneId.localeCompare(right.paneId)
+  );
+}
+
 /** Attach each Herdr agent to exactly one known, most-specific checkout. */
 export async function attachAgentPresence(
   projects: readonly ProjectStatus[],
   snapshot: HerdrSnapshot,
 ): Promise<void> {
   const targets = projects.flatMap((project) => [
-    { path: project.path, agents: project.agents },
-    ...project.worktrees.map((worktree) => ({ path: worktree.path, agents: worktree.agents })),
+    { path: project.path, agents: project.agents, panes: project.panes },
+    ...project.worktrees.map((worktree) => ({
+      path: worktree.path,
+      agents: worktree.agents,
+      panes: worktree.panes,
+    })),
   ]);
   const canonicalTargets = await Promise.all(
     targets.map(async (target) => ({ ...target, canonicalPath: await canonical(target.path) })),
@@ -249,5 +312,26 @@ export async function attachAgentPresence(
     const { cwd: _cwd, ...presence } = agent;
     target.agents.push(presence);
   }
-  for (const target of targets) target.agents.sort(compareAgents);
+  for (const pane of snapshot.panes) {
+    const workspacePath = workspacePaths.get(pane.workspaceId);
+    const cwd = pane.cwd ? await canonical(pane.cwd) : undefined;
+    const target =
+      canonicalTargets.find(
+        (candidate) =>
+          (workspacePath !== undefined && contains(candidate.canonicalPath, workspacePath)) ||
+          (workspacePath === undefined &&
+            cwd !== undefined &&
+            contains(candidate.canonicalPath, cwd)),
+      ) ??
+      (workspacePath !== undefined && cwd !== undefined
+        ? canonicalTargets.find((candidate) => contains(candidate.canonicalPath, cwd))
+        : undefined);
+    if (!target) continue;
+    const { cwd: _cwd, ...presence } = pane;
+    target.panes.push(presence);
+  }
+  for (const target of targets) {
+    target.agents.sort(compareAgents);
+    target.panes.sort(comparePanes);
+  }
 }

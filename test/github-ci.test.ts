@@ -57,7 +57,7 @@ function delivery(event: string, payload: unknown): WebhookDelivery {
 
 function baseProjection(): CiProjection {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
     projectedAt: "2026-08-27T20:00:00Z",
     owner: "possibilities",
@@ -65,10 +65,17 @@ function baseProjection(): CiProjection {
     paths: ["/code/agentsource"],
     available: true,
     defaultBranch: "main",
-    headSha: "abc123",
-    headCommittedAt: "2026-08-27T19:58:00Z",
-    aggregateState: "PENDING",
-    contexts: [],
+    primaryBranch: "main",
+    heads: [
+      {
+        sha: "abc123",
+        committedAt: "2026-08-27T19:58:00Z",
+        aggregateState: "PENDING",
+        contexts: [],
+        diagnostics: [],
+      },
+    ],
+    targets: [{ kind: "branch", branch: "main", role: "primary", headSha: "abc123" }],
     diagnostics: [],
   };
 }
@@ -124,15 +131,22 @@ test("hydrates every project in one GitHub query and preserves check/status deta
   expect(calls[0]?.join(" ")).toContain("p1: repository");
   expect(projections[0]).toMatchObject({
     available: true,
-    aggregateState: "PENDING",
     defaultBranch: "main",
-    headSha: "abc123",
-    contexts: [
-      { kind: "check-run", name: "build", app: "GitHub Actions" },
-      { kind: "status", name: "deploy", state: "SUCCESS" },
+    heads: [
+      {
+        sha: "abc123",
+        aggregateState: "PENDING",
+        contexts: [
+          { kind: "check-run", name: "build", app: "GitHub Actions" },
+          { kind: "status", name: "deploy", state: "SUCCESS" },
+        ],
+      },
     ],
   });
-  expect(projections[1]).toMatchObject({ available: true, aggregateState: "NONE" });
+  expect(projections[1]).toMatchObject({
+    available: true,
+    heads: [{ aggregateState: "NONE" }],
+  });
 });
 
 test("paginates CI contexts and degrades only a repository with GraphQL errors", async () => {
@@ -167,11 +181,12 @@ test("paginates CI contexts and degrades only a repository with GraphQL errors",
           },
           errors: [{ message: "resource not accessible", path: ["p1"] }],
         });
+      const next = repository("SUCCESS", [
+        { __typename: "StatusContext", context: "second", state: "SUCCESS" },
+      ]) as { defaultBranchRef: { target: unknown } };
       return ok({
         data: {
-          repository: repository("SUCCESS", [
-            { __typename: "StatusContext", context: "second", state: "SUCCESS" },
-          ]),
+          repository: { object: next.defaultBranchRef.target },
         },
       });
     },
@@ -181,24 +196,26 @@ test("paginates CI contexts and degrades only a repository with GraphQL errors",
   expect(projections[0]).toMatchObject({
     revision: 4,
     available: true,
-    contexts: [{ name: "first" }, { name: "second" }],
+    heads: [{ contexts: [{ name: "first" }, { name: "second" }] }],
   });
   expect(projections[1]).toMatchObject({
     revision: 2,
     available: false,
-    aggregateState: "UNAVAILABLE",
-    diagnostics: [expect.stringContaining("resource not accessible")],
+    heads: [],
   });
+  expect(projections[1]?.diagnostics).toContainEqual(
+    expect.stringContaining("resource not accessible"),
+  );
 });
 
-test("classifies only default-head webhook deliveries as CI-relevant", () => {
+test("classifies registered-project CI events as relevant", () => {
   const projection = baseProjection();
   expect(deliveryAffectsCi(delivery("push", { ref: "refs/heads/main" }), projection)).toBe(true);
-  expect(deliveryAffectsCi(delivery("push", { ref: "refs/heads/topic" }), projection)).toBe(false);
+  expect(deliveryAffectsCi(delivery("push", { ref: "refs/heads/topic" }), projection)).toBe(true);
   expect(
     deliveryAffectsCi(delivery("check_run", { check_run: { head_sha: "abc123" } }), projection),
   ).toBe(true);
-  expect(deliveryAffectsCi(delivery("status", { sha: "other" }), projection)).toBe(false);
+  expect(deliveryAffectsCi(delivery("status", { sha: "other" }), projection)).toBe(true);
   expect(deliveryAffectsCi(delivery("issues", {}), projection)).toBe(false);
 });
 
@@ -212,24 +229,96 @@ test("refreshes and emits only the affected registered project", async () => {
       root,
       refreshDelayMs: 0,
       now: () => new Date("2026-08-27T20:00:00Z"),
-      git: async (_cwd, args) =>
-        args[0] === "rev-parse"
-          ? { code: 0, stdout: `${projectPath}\n`, stderr: "" }
-          : { code: 0, stdout: "git@github.com:possibilities/agentsource.git\n", stderr: "" },
+      git: async (_cwd, args) => {
+        if (args[0] === "remote")
+          return { code: 0, stdout: "git@github.com:possibilities/agentsource.git\n", stderr: "" };
+        if (args[0] === "config") return { code: 1, stdout: "", stderr: "" };
+        if (args[0] === "worktree")
+          return {
+            code: 0,
+            stdout: `worktree ${projectPath}\0HEAD abc123\0branch refs/heads/main\0\0`,
+            stderr: "",
+          };
+        return {
+          code: 0,
+          stdout: args[1] === "--show-toplevel" ? `${projectPath}\n` : "abc123\n",
+          stderr: "",
+        };
+      },
       gh: async () => {
         ghCalls += 1;
+        const value = repository(ghCalls === 1 ? "PENDING" : "SUCCESS") as Record<string, unknown>;
+        const target = (value.defaultBranchRef as { target: unknown }).target;
         return ok({
           data: {
-            p0: repository(ghCalls === 1 ? "PENDING" : "SUCCESS"),
+            p0: { ...value, h0: target },
           },
         });
       },
     });
-    expect(store.list()[0]).toMatchObject({ revision: 1, aggregateState: "PENDING" });
+    expect(store.list()).toEqual([]);
+    expect(ghCalls).toBe(0);
+    expect(await store.snapshot(["ci:possibilities:agentsource"])).toMatchObject([
+      { revision: 1, heads: [{ aggregateState: "PENDING" }] },
+    ]);
+    expect(ghCalls).toBe(1);
+    await store.snapshot(["ci:*"]);
+    expect(ghCalls).toBe(1);
     const updated = new Promise<CiProjection>((resolve) => store.onUpdate(resolve));
     store.handleDelivery(delivery("status", { sha: "abc123" }));
-    expect(await updated).toMatchObject({ revision: 2, aggregateState: "SUCCESS" });
+    expect(await updated).toMatchObject({
+      revision: 2,
+      heads: [{ aggregateState: "SUCCESS" }],
+    });
     expect(ghCalls).toBe(2);
+    await store.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a slow first hydration cannot overwrite a webhook refresh", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agentsource-ci-race-"));
+  const projectPath = join(root, "agentsource");
+  mkdirSync(projectPath);
+  const pending: Array<(result: GitResult) => void> = [];
+  const localGit = async (_cwd: string, args: readonly string[]): Promise<GitResult> => {
+    if (args[0] === "remote")
+      return { code: 0, stdout: "git@github.com:possibilities/agentsource.git\n", stderr: "" };
+    if (args[0] === "config") return { code: 1, stdout: "", stderr: "" };
+    if (args[0] === "worktree")
+      return {
+        code: 0,
+        stdout: `worktree ${projectPath}\0HEAD abc123\0branch refs/heads/main\0\0`,
+        stderr: "",
+      };
+    return {
+      code: 0,
+      stdout: args[1] === "--show-toplevel" ? `${projectPath}\n` : "abc123\n",
+      stderr: "",
+    };
+  };
+  const response = (state: "PENDING" | "SUCCESS"): GitResult => {
+    const value = repository(state) as Record<string, unknown>;
+    const target = (value.defaultBranchRef as { target: unknown }).target;
+    return ok({ data: { p0: { ...value, h0: target } } });
+  };
+  try {
+    const store = await createCiProjectionStore({
+      root,
+      refreshDelayMs: 0,
+      git: localGit,
+      gh: async () => await new Promise<GitResult>((resolve) => pending.push(resolve)),
+    });
+    const first = store.snapshot(["ci:*"]);
+    while (pending.length < 1) await Bun.sleep(0);
+    const updated = new Promise<CiProjection>((resolve) => store.onUpdate(resolve));
+    store.handleDelivery(delivery("status", { sha: "abc123" }));
+    while (pending.length < 2) await Bun.sleep(0);
+    pending[1]?.(response("SUCCESS"));
+    expect(await updated).toMatchObject({ heads: [{ aggregateState: "SUCCESS" }] });
+    pending[0]?.(response("PENDING"));
+    expect(await first).toMatchObject([{ heads: [{ aggregateState: "SUCCESS" }] }]);
     await store.close();
   } finally {
     rmSync(root, { recursive: true, force: true });

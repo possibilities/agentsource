@@ -15,6 +15,13 @@ const PROJECT: ProjectStatus = {
   path: "/Users/example/code/project",
   displayPath: "~/code/project",
   primaryBranch: "main",
+  primaryHead: "main-sha",
+  primaryCi: {
+    channel: "ci:example:project",
+    state: "PASS",
+    headSha: "main-sha",
+    aggregateState: "SUCCESS",
+  },
   primaryWorking: {
     files: 0,
     additions: 0,
@@ -38,6 +45,7 @@ const PROJECT: ProjectStatus = {
       focused: true,
     },
   ],
+  panes: [],
   worktrees: [
     {
       path: "/Users/example/.herdr/worktrees/project/worktree-long-name",
@@ -70,6 +78,13 @@ const PROJECT: ProjectStatus = {
           focused: false,
         },
       ],
+      panes: [],
+      ci: {
+        channel: "ci:example:project",
+        state: "FAIL",
+        headSha: "1234567890abcdef",
+        aggregateState: "FAILURE",
+      },
     },
   ],
   issues: [],
@@ -79,6 +94,7 @@ const RESULT: ScanResult = {
   root: "/Users/example/code",
   projects: [PROJECT],
   agentPresence: { available: true, diagnostics: [] },
+  ci: { available: true, projections: [], diagnostics: [] },
   diagnostics: [],
   scannedAt: new Date("2026-08-26T00:00:00Z"),
 };
@@ -128,7 +144,7 @@ describe("responsive renderer", () => {
     };
     const wide = plainText(renderScan(aggregate, 120)).split("\n")[0];
     expect(wide).toBe(
-      "▎ 2 PROJECTS · 3 LINKED WORKTREES · 14 WORKING FILES · 8 UNPUSHED COMMITS · 5 HERDR AGENTS",
+      "▎ 2 PROJECTS · 3 LINKED WORKTREES · 14 WORKING FILES · 8 UNPUSHED COMMITS · 5 HERDR SESSIONS",
     );
 
     const narrow = plainText(renderScan(RESULT, 40)).split("\n").slice(0, 2);
@@ -223,11 +239,12 @@ describe("responsive renderer", () => {
     const output = renderJson(RESULT);
     expect(output.endsWith("\n")).toBe(true);
     expect(JSON.parse(output)).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       scannedAt: "2026-08-26T00:00:00.000Z",
       root: RESULT.root,
       projects: RESULT.projects,
       agentPresence: RESULT.agentPresence,
+      ci: RESULT.ci,
       diagnostics: RESULT.diagnostics,
     });
   });

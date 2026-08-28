@@ -2,6 +2,8 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { defaultWebhookSocketPath, snapshotChannels } from "./channel-client.ts";
+import { applyCiObservation, projectionFromEnvelope } from "./ci-observation.ts";
 import { scanProjects } from "./git.ts";
 import { runGitHubWebhookSetupCli } from "./github-webhooks.ts";
 import { renderJson, renderSnapshot } from "./render.ts";
@@ -28,16 +30,14 @@ interface WebhookConfigureInvocation {
 
 type Invocation = ObservationInvocation | WebhookDaemonInvocation | WebhookConfigureInvocation;
 
-export function defaultWebhookSocketPath(): string {
-  return join(homedir(), ".local", "state", "agentsource", "webhooks.sock");
-}
+export { defaultWebhookSocketPath } from "./channel-client.ts";
 
 function usage(): string {
   return `Usage: agentsource [--json | --snapshot] [--root PATH]
        agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH] [--root PATH]
        agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]
 
-Show ~/code projects with working changes, unpushed work, linked worktrees, or Herdr agents.
+Show ~/code projects with working changes, unpushed work, linked worktrees, CI attention, or Herdr sessions.
 
 Opens the TUI in a terminal; otherwise prints one JSON observation.
 
@@ -184,7 +184,21 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     }
   }
   if (mode === "snapshot" || mode === "json") {
-    const result = await scanProjects({ ...(invocation.root ? { root: invocation.root } : {}) });
+    const [raw, snapshot] = await Promise.all([
+      scanProjects({
+        ...(invocation.root ? { root: invocation.root } : {}),
+        includeQuiet: true,
+      }),
+      snapshotChannels({ channels: ["ci:*"] }),
+    ]);
+    const result = applyCiObservation(raw, {
+      available: snapshot.available,
+      projections: snapshot.values.flatMap((value) => {
+        const projection = projectionFromEnvelope(value);
+        return projection ? [projection] : [];
+      }),
+      diagnostics: snapshot.diagnostics,
+    });
     process.stdout.write(
       mode === "json" ? renderJson(result) : renderSnapshot(result, process.stdout.columns || 100),
     );

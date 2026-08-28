@@ -12,6 +12,7 @@ import {
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { snapshotChannels } from "../src/channel-client.ts";
 import type { CiProjectionStore } from "../src/github-ci.ts";
 import {
   CI_PROJECTION_SCHEMA_VERSION,
@@ -125,10 +126,17 @@ function projection(owner: string, repo: string, revision = 1): CiProjection {
     paths: [`/code/${repo}`],
     available: true,
     defaultBranch: "main",
-    headSha: "abc123",
-    headCommittedAt: "2026-08-27T19:58:00.000Z",
-    aggregateState: "PENDING",
-    contexts: [],
+    primaryBranch: "main",
+    heads: [
+      {
+        sha: "abc123",
+        committedAt: "2026-08-27T19:58:00.000Z",
+        aggregateState: "PENDING",
+        contexts: [],
+        diagnostics: [],
+      },
+    ],
+    targets: [{ kind: "branch", branch: "main", role: "primary", headSha: "abc123" }],
     diagnostics: [],
   };
 }
@@ -144,6 +152,16 @@ class FakeCiStore implements CiProjectionStore {
 
   list(): readonly CiProjection[] {
     return this.#projections;
+  }
+
+  async snapshot(channels: readonly string[]): Promise<readonly CiProjection[]> {
+    return this.#projections.filter((value) =>
+      channels.some((pattern) =>
+        pattern.endsWith("*")
+          ? `ci:${value.owner}:${value.repo}`.startsWith(pattern.slice(0, -1))
+          : pattern === `ci:${value.owner}:${value.repo}`,
+      ),
+    );
   }
 
   onUpdate(listener: (value: CiProjection) => void): () => void {
@@ -162,7 +180,7 @@ class FakeCiStore implements CiProjectionStore {
     const updated = {
       ...current,
       revision: current.revision + 1,
-      aggregateState: "SUCCESS" as const,
+      heads: current.heads.map((head) => ({ ...head, aggregateState: "SUCCESS" as const })),
     };
     this.#projections[index] = updated;
     for (const listener of this.#listeners) listener(updated);
@@ -293,6 +311,29 @@ describe("webhook daemon", () => {
     prefix.destroy();
   });
 
+  test("returns a bounded projection snapshot and closes the RPC connection", async () => {
+    const ciStore = new FakeCiStore([
+      projection("possibilities", "agentsource"),
+      projection("possibilities", "agentstart"),
+    ]);
+    const daemon = await start({ ciStore });
+    const result = await snapshotChannels({
+      socketPath: daemon.socketPath,
+      channels: ["ci:possibilities:agentsource"],
+      requestId: "observation-1",
+    });
+    expect(result).toMatchObject({
+      available: true,
+      diagnostics: [],
+      values: [
+        {
+          channel: "ci:possibilities:agentsource",
+          data: { owner: "possibilities", repo: "agentsource", revision: 1 },
+        },
+      ],
+    });
+  });
+
   test("emits only the changed repository projection after a relevant delivery", async () => {
     const ciStore = new FakeCiStore([
       projection("possibilities", "agentsource"),
@@ -313,7 +354,7 @@ describe("webhook daemon", () => {
     expect(await deliveryRecord).toMatchObject({ channel: "deliveries" });
     expect(await projectionRecord).toMatchObject({
       channel: "ci:possibilities:agentsource",
-      data: { revision: 2, aggregateState: "SUCCESS" },
+      data: { revision: 2, heads: [{ aggregateState: "SUCCESS" }] },
     });
     socket.destroy();
   });
