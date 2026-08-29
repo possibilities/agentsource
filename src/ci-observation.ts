@@ -71,12 +71,14 @@ export function applyCiObservation(
     projections: readonly CiProjection[];
     diagnostics: readonly string[];
   },
+  options: { includeQuiet?: boolean } = {},
 ): ScanResult {
   const projections = observation.available ? observation.projections : [];
   const projects = raw.projects.map((project) => {
     const projection = projectionForPath(projections, project.path);
     return {
       ...project,
+      githubVisibility: projection?.visibility ?? null,
       primaryCi: summary(projection, project.primaryHead),
       worktrees: project.worktrees.map((worktree) => ({
         ...worktree,
@@ -86,7 +88,9 @@ export function applyCiObservation(
   });
   return {
     ...raw,
-    projects: projects.filter(projectIsVisible),
+    projects: projects.filter(
+      (project) => options.includeQuiet === true || projectIsVisible(project),
+    ),
     ci: {
       available: observation.available,
       projections: [...projections],

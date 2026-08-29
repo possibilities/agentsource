@@ -97,3 +97,9 @@ A GitHub project discovered as a direct child of the webhook daemon's chosen
 root when it starts. Registration is observational and does not alter either
 the local project or its GitHub repository.
 _Avoid_: configured hook, watched repository
+
+**GitHub repository visibility**
+The GitHub-reported access classification for a registered project's remote
+repository: `PRIVATE`, `PUBLIC`, or `INTERNAL`. It is unknown when no current
+GitHub projection is available and never inferred from a remote URL.
+_Avoid_: project privacy, local visibility

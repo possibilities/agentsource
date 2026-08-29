@@ -136,6 +136,7 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
   let ciDiagnostic = "CI socket unavailable: connecting";
   let ciSubscription: ChannelSubscriptionHandle | null = null;
   let scanning = false;
+  let showAllProjects = false;
   let closed = false;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void;
@@ -183,6 +184,13 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
       void refresh();
       return;
     }
+    if (name === "a") {
+      showAllProjects = !showAllProjects;
+      joinCi();
+      scroll.scrollTop = 0;
+      paint();
+      return;
+    }
     if (name === "j" || name === "down") scrollBy(2);
     else if (name === "k" || name === "up") scrollBy(-2);
     else if (name === "g") scrollTo(0);
@@ -218,6 +226,17 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
       height: rows,
       commands: [
         { id: "refresh", key: "R", label: "refresh projects", onRun: () => void refresh() },
+        {
+          id: "all",
+          key: "A",
+          label: showAllProjects ? "show attention projects" : "show all projects",
+          onRun: () => {
+            showAllProjects = !showAllProjects;
+            joinCi();
+            scroll.scrollTop = 0;
+            paint();
+          },
+        },
         { id: "up", key: "K", label: "scroll up", onRun: () => scrollBy(-2) },
         { id: "down", key: "J", label: "scroll down", onRun: () => scrollBy(2) },
         { id: "top", key: "G", label: "jump to top", onRun: () => scrollTo(0) },
@@ -235,11 +254,15 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
 
   const joinCi = (): void => {
     if (!rawObservation) return;
-    observation = applyCiObservation(rawObservation, {
-      available: ciAvailable,
-      projections: [...projections.values()],
-      diagnostics: ciAvailable ? [] : [ciDiagnostic],
-    });
+    observation = applyCiObservation(
+      rawObservation,
+      {
+        available: ciAvailable,
+        projections: [...projections.values()],
+        diagnostics: ciAvailable ? [] : [ciDiagnostic],
+      },
+      { includeQuiet: showAllProjects },
+    );
   };
 
   async function refresh(resetScroll = true): Promise<void> {

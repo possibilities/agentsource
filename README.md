@@ -42,9 +42,11 @@ bun run src/cli.ts
 `ctrl+k` opens the command palette. It contains every action and binding;
 `ctrl+c` always remains the terminal interrupt. The live TUI refreshes its
 observation roughly every five seconds, while `refresh projects` starts an
-immediate scan. When stdin and stdout are both terminals, agentsource opens the
-TUI. Otherwise it prints a JSON observation so agents and scripts can consume
-the result without an extra flag.
+immediate scan. `A` toggles between projects that need attention and all
+discovered projects. A `[PRIVATE]` badge marks projects whose current GitHub
+projection reports a private repository. When stdin and stdout are both
+terminals, agentsource opens the TUI. Otherwise it prints a JSON observation so
+agents and scripts can consume the result without an extra flag.
 
 ```console
 bun run src/cli.ts | jq '.projects[] | {name, working, unpushed}'
@@ -55,9 +57,11 @@ scripts/install.sh --install
 scripts/install.sh --uninstall
 ```
 
-The JSON document has `schemaVersion: 3` and contains `scannedAt`, `root`,
+The JSON document has `schemaVersion: 4` and contains `scannedAt`, `root`,
 `projects`, `agentPresence`, `ci`, and `diagnostics`. Each project and linked
-worktree has `agents` and `panes` arrays. Normalized agent entries include harness and status,
+worktree has `agents` and `panes` arrays. Projects also expose
+`githubVisibility`, which is null when no current GitHub projection is
+available. Normalized agent entries include harness and status,
 conversation and session identity when available, Herdr pane/tab/workspace
 identifiers, and focus state. Pane entries retain pane/tab/workspace identity,
 title, and focus state after an agent exits. `agentPresence.available`
@@ -68,10 +72,11 @@ diagnostics record degraded workspace metadata. `--json` forces this output in a
 Every visible primary branch and linked-worktree branch also has a normalized
 CI summary: `PASS`, `PENDING`, `FAIL`, `NONE`, `LOCAL`, or `UNKNOWN`. The
 top-level `ci.projections` array retains the complete daemon projections used
-to derive those summaries. One-shot observations obtain them through the Unix
-socket snapshot RPC; agentsource never queries GitHub from the observation
-process. If the daemon is unavailable, Git and Herdr observation still
-succeeds with CI availability diagnostics.
+to derive those summaries and their GitHub repository visibility. CI
+projections use schema version 3. One-shot observations obtain them through the
+Unix socket snapshot RPC; agentsource never queries GitHub from the observation
+process. If the daemon is unavailable, Git and Herdr observation still succeeds
+with CI availability diagnostics.
 
 ## GitHub webhook wiring
 

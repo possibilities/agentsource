@@ -610,6 +610,7 @@ async function inspectProject(
       panes: [],
       worktrees: worktrees.sort((left, right) => left.displayPath.localeCompare(right.displayPath)),
       issues,
+      githubVisibility: null,
       primaryCi: null,
     },
     diagnostics,

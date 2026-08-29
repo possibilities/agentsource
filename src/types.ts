@@ -70,6 +70,7 @@ export interface ProjectStatus {
   panes: HerdrPanePresence[];
   worktrees: WorktreeStatus[];
   issues: string[];
+  githubVisibility: GitHubRepositoryVisibility | null;
   primaryCi: CiSummary | null;
 }
 
@@ -88,7 +89,7 @@ export interface ScanResult {
   scannedAt: Date;
 }
 
-export const OBSERVATION_SCHEMA_VERSION = 3 as const;
+export const OBSERVATION_SCHEMA_VERSION = 4 as const;
 
 /** Stable machine-readable form of a point-in-time scan. */
 export interface SerializedObservation {
@@ -145,7 +146,9 @@ export interface ChannelSnapshotResponse {
   values: ChannelEnvelope[];
 }
 
-export const CI_PROJECTION_SCHEMA_VERSION = 2 as const;
+export const CI_PROJECTION_SCHEMA_VERSION = 3 as const;
+
+export type GitHubRepositoryVisibility = "PRIVATE" | "PUBLIC" | "INTERNAL";
 
 export type CiAggregateState =
   | "ERROR"
@@ -221,6 +224,7 @@ export interface CiProjection {
   repo: string;
   paths: string[];
   available: boolean;
+  visibility: GitHubRepositoryVisibility | null;
   defaultBranch: string | null;
   primaryBranch: string;
   heads: CiHead[];

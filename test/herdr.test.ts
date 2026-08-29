@@ -72,6 +72,7 @@ function project(): ProjectStatus {
       },
     ],
     issues: [],
+    githubVisibility: null,
   };
 }
 

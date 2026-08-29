@@ -14,6 +14,7 @@ import {
   type CiHead,
   type CiProjection,
   type CiTarget,
+  type GitHubRepositoryVisibility,
   type WebhookDelivery,
 } from "./types.ts";
 
@@ -73,6 +74,10 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function repositoryVisibility(value: unknown): GitHubRepositoryVisibility | null {
+  return value === "PRIVATE" || value === "PUBLIC" || value === "INTERNAL" ? value : null;
+}
+
 function commitFields(after?: string): string {
   const afterArgument = after === undefined ? "" : `, after: ${JSON.stringify(after)}`;
   return `
@@ -103,6 +108,7 @@ function batchQuery(inputs: readonly ProjectInput[]): string {
         `h${headIndex}: object(expression: ${JSON.stringify(sha)}) {${commitFields()}\n    }`,
     );
     return `p${projectIndex}: repository(owner: ${JSON.stringify(input.project.owner)}, name: ${JSON.stringify(input.project.repo)}) {
+    visibility
     defaultBranchRef { name target {${commitFields()}\n      } }
     ${objects.join("\n    ")}
   }`;
@@ -316,6 +322,7 @@ function unavailableProjection(
     repo: input.project.repo,
     paths: [...input.project.paths],
     available: false,
+    visibility: null,
     defaultBranch: null,
     primaryBranch: input.primaryBranch,
     heads: input.localShas.map((sha) => ({
@@ -423,6 +430,7 @@ export async function fetchCiProjections(
           repo: input.project.repo,
           paths: [...input.project.paths],
           available: true,
+          visibility: repositoryVisibility(repository.visibility),
           defaultBranch,
           primaryBranch: input.primaryBranch,
           heads: [...heads.values()],

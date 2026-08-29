@@ -23,8 +23,10 @@ function repository(
   state: string | null,
   nodes: unknown[] = [],
   pageInfo = { hasNextPage: false, endCursor: null as string | null },
+  visibility: "PRIVATE" | "PUBLIC" = "PUBLIC",
 ): unknown {
   return {
+    visibility,
     defaultBranchRef: {
       name: "main",
       target: {
@@ -57,13 +59,14 @@ function delivery(event: string, payload: unknown): WebhookDelivery {
 
 function baseProjection(): CiProjection {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     projectedAt: "2026-08-27T20:00:00Z",
     owner: "possibilities",
     repo: "agentsource",
     paths: ["/code/agentsource"],
     available: true,
+    visibility: "PUBLIC",
     defaultBranch: "main",
     primaryBranch: "main",
     heads: [
@@ -99,26 +102,31 @@ test("hydrates every project in one GitHub query and preserves check/status deta
       mutableCalls.push([...args]);
       return ok({
         data: {
-          p0: repository("PENDING", [
-            {
-              __typename: "CheckRun",
-              name: "build",
-              status: "IN_PROGRESS",
-              conclusion: null,
-              detailsUrl: "https://github.com/check/1",
-              startedAt: "2026-08-27T19:59:00Z",
-              completedAt: null,
-              checkSuite: { app: { name: "GitHub Actions" } },
-            },
-            {
-              __typename: "StatusContext",
-              context: "deploy",
-              state: "SUCCESS",
-              description: "ready",
-              targetUrl: "https://example.test/deploy",
-              createdAt: "2026-08-27T19:59:30Z",
-            },
-          ]),
+          p0: repository(
+            "PENDING",
+            [
+              {
+                __typename: "CheckRun",
+                name: "build",
+                status: "IN_PROGRESS",
+                conclusion: null,
+                detailsUrl: "https://github.com/check/1",
+                startedAt: "2026-08-27T19:59:00Z",
+                completedAt: null,
+                checkSuite: { app: { name: "GitHub Actions" } },
+              },
+              {
+                __typename: "StatusContext",
+                context: "deploy",
+                state: "SUCCESS",
+                description: "ready",
+                targetUrl: "https://example.test/deploy",
+                createdAt: "2026-08-27T19:59:30Z",
+              },
+            ],
+            undefined,
+            "PRIVATE",
+          ),
           p1: repository(null),
         },
       });
@@ -131,6 +139,7 @@ test("hydrates every project in one GitHub query and preserves check/status deta
   expect(calls[0]?.join(" ")).toContain("p1: repository");
   expect(projections[0]).toMatchObject({
     available: true,
+    visibility: "PRIVATE",
     defaultBranch: "main",
     heads: [
       {
@@ -145,6 +154,7 @@ test("hydrates every project in one GitHub query and preserves check/status deta
   });
   expect(projections[1]).toMatchObject({
     available: true,
+    visibility: "PUBLIC",
     heads: [{ aggregateState: "NONE" }],
   });
 });

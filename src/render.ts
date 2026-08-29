@@ -355,7 +355,11 @@ export function renderProject(project: ProjectStatus, width: number): Line[] {
     ),
   ];
   const header = aligned(
-    [span(GLYPHS.rail, "accent", true), span(` ${project.name}`, "text", true)],
+    [
+      span(GLYPHS.rail, "accent", true),
+      ...(project.githubVisibility === "PRIVATE" ? [span(" [PRIVATE]", "local", true)] : []),
+      span(` ${project.name}`, "text", true),
+    ],
     summary,
     available,
   );

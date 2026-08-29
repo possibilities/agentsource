@@ -125,6 +125,7 @@ function projection(owner: string, repo: string, revision = 1): CiProjection {
     repo,
     paths: [`/code/${repo}`],
     available: true,
+    visibility: "PUBLIC",
     defaultBranch: "main",
     primaryBranch: "main",
     heads: [

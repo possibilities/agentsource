@@ -104,6 +104,7 @@ const PROJECT: ProjectStatus = {
     },
   ],
   issues: [],
+  githubVisibility: "PRIVATE",
 };
 
 const RESULT: ScanResult = {
@@ -124,6 +125,7 @@ describe("responsive renderer", () => {
         expect(stringWidth(line.map((part) => part.text).join(""))).toBeLessThanOrEqual(width);
       }
       expect(lines[0]?.map((part) => part.text).join("")).toContain(width < 66 ? "1w" : "1 linked");
+      expect(lines[0]?.map((part) => part.text).join("")).toContain("[PRIVATE]");
     });
   }
 
@@ -139,6 +141,7 @@ describe("responsive renderer", () => {
     expect(frame).toContain("DIVERGED FROM main · 3 ahead · 1 behind");
     expect(frame).toContain("codex WORKING");
     expect(frame).toContain("claude IDLE");
+    expect(frame).toContain("[PRIVATE]");
     expect(frame).not.toContain("HERDR PANE");
     expect(frame).not.toContain("idle shell");
     expect(frame).not.toContain("finished agent shell");
@@ -258,7 +261,7 @@ describe("responsive renderer", () => {
     const output = renderJson(RESULT);
     expect(output.endsWith("\n")).toBe(true);
     expect(JSON.parse(output)).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       scannedAt: "2026-08-26T00:00:00.000Z",
       root: RESULT.root,
       projects: RESULT.projects,

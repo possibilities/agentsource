@@ -49,6 +49,7 @@ const project = (worktree = false): ProjectStatus => ({
       ]
     : [],
   issues: [],
+  githubVisibility: null,
   primaryCi: null,
 });
 
@@ -65,13 +66,14 @@ function scan(projects: ProjectStatus[]): ScanResult {
 
 function projection(primary: "SUCCESS" | "FAILURE", local = false): CiProjection {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     projectedAt: "2026-08-28T00:00:00Z",
     owner: "possibilities",
     repo: "project",
     paths: ["/code/project"],
     available: true,
+    visibility: "PRIVATE",
     defaultBranch: "main",
     primaryBranch: "main",
     heads: [
@@ -131,10 +133,21 @@ describe("CI observations", () => {
       diagnostics: [],
     });
     expect(observed.projects[0]).toMatchObject({
+      githubVisibility: "PRIVATE",
       primaryCi: { state: "PASS", headSha: "primary-sha" },
       worktrees: [{ ci: { state: "LOCAL", headSha: "local-sha" } }],
     });
     expect(observed.ci.projections).toEqual([value]);
+  });
+
+  test("can retain quiet projects when the TUI shows all projects", () => {
+    const observed = applyCiObservation(
+      scan([project()]),
+      { available: true, projections: [projection("SUCCESS")], diagnostics: [] },
+      { includeQuiet: true },
+    );
+    expect(observed.projects).toHaveLength(1);
+    expect(observed.projects[0]?.primaryCi?.state).toBe("PASS");
   });
 
   test("an unavailable socket never presents retained projections as current", () => {
@@ -155,6 +168,7 @@ describe("CI observations", () => {
       diagnostics: ["connection closed"],
     });
     expect(observed.projects[0]?.primaryCi?.state).toBe("UNKNOWN");
+    expect(observed.projects[0]?.githubVisibility).toBeNull();
     expect(observed.ci.projections).toEqual([]);
   });
 });
