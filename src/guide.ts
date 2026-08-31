@@ -23,10 +23,19 @@ export interface GuideArgument {
   choices?: readonly string[];
   default?: unknown;
   aliases?: readonly string[];
+  csv?: boolean;
+  minimum?: number;
+  maximum?: number;
+  role?: "call" | "output-format" | "store-selection" | "meta";
+}
+
+export interface GuideExample {
+  invocation: string;
+  description: string;
 }
 
 export interface GuideConstraint {
-  kind: "one_of" | "conflicts" | "requires";
+  kind: "one_of" | "at_least_one" | "conflicts" | "requires";
   arguments: readonly string[];
   required?: boolean;
   description?: string;
@@ -42,6 +51,10 @@ export interface GuideCommand {
   subcommands?: readonly GuideCommand[];
   stdin?: { accepts: "text" | "json"; required?: boolean; description: string };
   constraints?: readonly GuideConstraint[];
+  examples?: readonly GuideExample[];
+  blocking?: boolean;
+  aliases?: readonly string[];
+  deprecated?: string;
 }
 
 export interface AgentContract {
@@ -80,11 +93,13 @@ export const CONTRACT: AgentContract = {
           name: "--json",
           type: "boolean",
           description: "Print one JSON observation and exit, instead of opening the TUI.",
+          role: "output-format",
         },
         {
           name: "--snapshot",
           type: "boolean",
           description: "Print one plain-text observation and exit, instead of opening the TUI.",
+          role: "output-format",
         },
         {
           name: "--root",
@@ -101,6 +116,22 @@ export const CONTRACT: AgentContract = {
           description: "Only one output mode can be selected per call.",
         },
       ],
+      examples: [
+        {
+          invocation: "agentsource",
+          description: "Open the interactive Signal Room TUI over ~/code.",
+        },
+        {
+          invocation: "agentsource --json",
+          description:
+            "Print one JSON observation of ~/code and exit, for scripting or an agent caller.",
+        },
+        {
+          invocation: "agentsource --json --root ~/work",
+          description:
+            "Print one JSON observation of projects directly under ~/work instead of ~/code.",
+        },
+      ],
     },
     {
       name: "webhook-daemon",
@@ -109,6 +140,7 @@ export const CONTRACT: AgentContract = {
       mutates: true,
       guidance:
         "Long-running foreground process; runs until SIGINT or SIGTERM. Accepts GitHub webhooks over loopback HTTP (meant to sit behind Tailscale Funnel) and republishes CI observations to subscribers of its Unix socket.",
+      blocking: true,
       arguments: [
         {
           name: "--secret-file",
@@ -123,6 +155,8 @@ export const CONTRACT: AgentContract = {
           type: "integer",
           description: "Loopback HTTP port for Tailscale Funnel.",
           default: 8787,
+          minimum: 1,
+          maximum: 65535,
         },
         {
           name: "--socket",
@@ -137,6 +171,14 @@ export const CONTRACT: AgentContract = {
           description: "Register direct GitHub projects below PATH instead of ~/code.",
           format: "path",
           direction: "in",
+        },
+      ],
+      examples: [
+        {
+          invocation:
+            "agentsource webhook-daemon --secret-file ~/.config/agentsource/webhook-secret",
+          description:
+            "Run the receiver in the foreground on the default port and socket, until interrupted.",
         },
       ],
     },
@@ -184,6 +226,18 @@ export const CONTRACT: AgentContract = {
             "Actually create or update webhooks, instead of reporting what would change.",
         },
       ],
+      examples: [
+        {
+          invocation:
+            "agentsource webhook-configure --url https://ci.example.tailnet.ts.net --secret-file ~/.config/agentsource/webhook-secret",
+          description: "Report the webhook changes that would be made, without applying them.",
+        },
+        {
+          invocation:
+            "agentsource webhook-configure --url https://ci.example.tailnet.ts.net --secret-file ~/.config/agentsource/webhook-secret --apply",
+          description: "Create or update the repository webhooks for real, via the GitHub API.",
+        },
+      ],
     },
     {
       name: "guide",
@@ -195,6 +249,13 @@ export const CONTRACT: AgentContract = {
           name: "--json",
           type: "boolean",
           description: "Print the contract as the fixed envelope (the only supported form).",
+          role: "output-format",
+        },
+      ],
+      examples: [
+        {
+          invocation: "agentsource guide --json",
+          description: "Print this machine-readable contract as the fixed envelope.",
         },
       ],
     },
