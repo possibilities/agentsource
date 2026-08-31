@@ -6,6 +6,7 @@ import { defaultWebhookSocketPath, snapshotChannels } from "./channel-client.ts"
 import { applyCiObservation, projectionFromEnvelope } from "./ci-observation.ts";
 import { scanProjects } from "./git.ts";
 import { runGitHubWebhookSetupCli } from "./github-webhooks.ts";
+import { renderGuideJson, renderHelp } from "./guide.ts";
 import { renderJson, renderSnapshot } from "./render.ts";
 import { runTui } from "./tui/app.ts";
 import { readWebhookSecret, startWebhookDaemon } from "./webhooks.ts";
@@ -13,6 +14,10 @@ import { readWebhookSecret, startWebhookDaemon } from "./webhooks.ts";
 interface ObservationInvocation {
   mode: "tui" | "snapshot" | "json" | "help";
   root?: string;
+}
+
+interface GuideInvocation {
+  mode: "guide";
 }
 
 interface WebhookDaemonInvocation {
@@ -28,34 +33,22 @@ interface WebhookConfigureInvocation {
   args: string[];
 }
 
-type Invocation = ObservationInvocation | WebhookDaemonInvocation | WebhookConfigureInvocation;
+type Invocation =
+  | ObservationInvocation
+  | WebhookDaemonInvocation
+  | WebhookConfigureInvocation
+  | GuideInvocation;
 
 export { defaultWebhookSocketPath } from "./channel-client.ts";
 
 function usage(): string {
-  return `Usage: agentsource [--json | --snapshot] [--root PATH]
-       agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH] [--root PATH]
-       agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]
-
-Show ~/code projects with working changes, unpushed work, linked worktrees, CI attention, or Herdr sessions.
-
-Opens the TUI in a terminal; otherwise prints one JSON observation.
-
-Options:
-  --json        print one JSON observation and exit
-  --snapshot    print one plain observation and exit
-  --root PATH   scan direct projects below PATH instead of ~/code
-  --help        show this help
-
-Webhook daemon options:
-  --secret-file PATH  read the GitHub webhook secret from a private file
-  --port PORT         loopback HTTP port for Tailscale Funnel (default: 8787)
-  --socket PATH       Unix delivery stream socket
-  --root PATH         register direct GitHub projects below PATH (default: ~/code)
-`;
+  return renderHelp();
 }
 
 export function parseArgs(args: readonly string[]): Invocation {
+  if (args[0] === "guide") {
+    return { mode: "guide" };
+  }
   if (args[0] === "webhook-configure") {
     return { mode: "webhook-configure", args: [...args.slice(1)] };
   }
@@ -136,6 +129,10 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     );
     process.stderr.write(usage());
     return 2;
+  }
+  if (invocation.mode === "guide") {
+    process.stdout.write(renderGuideJson());
+    return 0;
   }
   const mode = resolveMode(
     invocation.mode,

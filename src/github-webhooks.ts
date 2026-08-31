@@ -3,6 +3,7 @@ import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { type GitResult, type GitRunner, runGit } from "./git.ts";
+import { renderWebhookConfigureHelp } from "./guide.ts";
 import { readWebhookSecret } from "./webhooks.ts";
 
 const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
@@ -355,11 +356,7 @@ export function parseSetupArgs(args: readonly string[]): SetupInvocation {
 }
 
 function setupUsage(): string {
-  return `Usage: agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--previous-url HTTPS_ORIGIN] [--root PATH] [--apply]
-
-Discover GitHub projects directly under ~/code and reconcile their repository
-webhooks. Without --apply, reports the changes it would make.
-`;
+  return renderWebhookConfigureHelp();
 }
 
 export async function runGitHubWebhookSetupCli(args = process.argv.slice(2)): Promise<number> {
