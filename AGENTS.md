@@ -19,8 +19,8 @@ lives in two siblings, and some changes here must cascade:
 - Skills under `skills/<name>/` ship into AgentStart's fixed private
   fleet resources (`~/code/agentstart/scripts/sync-skills`, run six-hourly
   by the scheduled updater). AgentLaunch loads them into every managed
-  session: Claude Code exposes `/agent:<name>`, Codex uses
-  `$agent:<name>`, and Pi uses `/<name>`. A SKILL.md edit is live within
+  session: Claude Code exposes `/agent:<name>`, and Codex uses
+  `$agent:<name>`. A SKILL.md edit is live within
   six hours, or on demand by running that script. Whether a new skill earns a TOOLS.md
   advertisement line is a deliberate decision —
   `agentwiki get tool-advertisement-policy`.
