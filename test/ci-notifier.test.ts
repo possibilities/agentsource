@@ -86,6 +86,55 @@ test("the primary branch head decides the verdict, and only PASS or FAIL is one"
   );
 });
 
+test("an unpushed local head yields to GitHub's head of the same branch", () => {
+  const pushed = "e".repeat(40);
+  const local = "f".repeat(40);
+  const ahead: CiProjection = {
+    ...projection("funk", "SUCCESS", { sha: pushed }),
+    heads: [
+      ...projection("funk", "SUCCESS", { sha: pushed }).heads,
+      {
+        sha: local,
+        committedAt: null,
+        aggregateState: "LOCAL",
+        contexts: [],
+        diagnostics: ["commit is not present on GitHub"],
+      },
+    ],
+    targets: [
+      { kind: "branch", branch: "main", role: "primary", headSha: local },
+      { kind: "checkout", path: "/home/me/code/funk", branch: "main", headSha: local },
+      { kind: "branch", branch: "main", role: "default", headSha: pushed },
+    ],
+  };
+  expect(primaryVerdict(ahead)).toEqual({
+    verdict: "PASS",
+    headSha: pushed,
+    url: "https://github.com/possibilities/funk/runs/1",
+  });
+  // A trunk that is not the default branch keeps its own head first.
+  const trunk: CiProjection = {
+    ...ahead,
+    primaryBranch: "integration",
+    heads: [
+      ...ahead.heads.filter((head) => head.sha !== local),
+      { ...projection("funk", "FAILURE", { sha: local }).heads[0]!, sha: local },
+    ],
+    targets: [
+      { kind: "branch", branch: "integration", role: "primary", headSha: local },
+      { kind: "branch", branch: "main", role: "default", headSha: pushed },
+    ],
+  };
+  expect(primaryVerdict(trunk)?.verdict).toBe("FAIL");
+  // Nothing on GitHub at all: no verdict.
+  expect(
+    primaryVerdict({
+      ...ahead,
+      targets: [{ kind: "branch", branch: "main", role: "primary", headSha: local }],
+    }),
+  ).toBeNull();
+});
+
 test("transitions are PASS to FAIL, FAIL to PASS, and a first FAIL; a first PASS is silent", () => {
   const state = emptyState();
   expect(applyProjection(state, projection("zmax", "SUCCESS"), NOW)).toEqual({

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { subscribeChannels } from "./channel-client.ts";
@@ -89,21 +89,36 @@ function contextUrl(context: CiContext | undefined): string | null {
   return context.kind === "check-run" ? context.detailsUrl : context.targetUrl;
 }
 
-/** The verdict a projection gives its primary branch, or null when it gives none. */
+/**
+ * The verdict a projection gives its primary branch, or null when it gives none.
+ *
+ * The primary target is the local checkout's head, which is ahead of GitHub
+ * whenever work is committed and not yet pushed, and behind it whenever the
+ * checkout has not fetched. CI only ever ran on what GitHub has, so when the
+ * primary branch is also the default branch, GitHub's own head of it decides;
+ * a configured trunk that differs from the default branch keeps its local
+ * head first and falls back to the default branch only when that head is not
+ * on GitHub at all.
+ */
 export function primaryVerdict(projection: CiProjection): Omit<RepoVerdict, "changedAt"> | null {
-  const target = projection.targets.find(
-    (candidate) => candidate.kind === "branch" && candidate.role === "primary",
-  );
-  const sha = target?.headSha;
-  if (!sha) return null;
-  const head = projection.heads.find(
-    (candidate) => candidate.sha.toLowerCase() === sha.toLowerCase(),
-  );
-  if (!head) return null;
-  const state = normalizeCiState(head.aggregateState);
-  if (state !== "PASS" && state !== "FAIL") return null;
-  const url = contextUrl(head.contexts.find(contextIsRed)) ?? contextUrl(head.contexts[0]);
-  return { verdict: state, headSha: head.sha, url };
+  const branchTargets = projection.targets.filter((target) => target.kind === "branch");
+  const primary = branchTargets.find((target) => target.role === "primary");
+  const fallback = branchTargets.find((target) => target.role === "default");
+  const sameBranch = primary && fallback && primary.branch === fallback.branch;
+  const candidates = sameBranch ? [fallback, primary] : [primary, fallback];
+  for (const target of candidates) {
+    const sha = target?.headSha;
+    if (!sha) continue;
+    const head = projection.heads.find(
+      (candidate) => candidate.sha.toLowerCase() === sha.toLowerCase(),
+    );
+    if (!head || head.aggregateState === "LOCAL") continue;
+    const state = normalizeCiState(head.aggregateState);
+    if (state !== "PASS" && state !== "FAIL") return null;
+    const url = contextUrl(head.contexts.find(contextIsRed)) ?? contextUrl(head.contexts[0]);
+    return { verdict: state, headSha: head.sha, url };
+  }
+  return null;
 }
 
 export interface Applied {
@@ -226,12 +241,34 @@ export function findNotifier(explicit?: string): string | null {
   return explicit ?? Bun.which("terminal-notifier");
 }
 
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+/**
+ * macOS refuses to surface a notification from an application bundle it has
+ * not registered, and a Homebrew upgrade relocates the bundle; terminal-notifier
+ * still exits 0, so the failure is silent. Re-register the Homebrew bundle
+ * before each post. Only the Homebrew layout is known; an explicit notifier
+ * elsewhere is left alone.
+ */
+function reregisterNotifier(notifier: string): void {
+  const prefix = dirname(dirname(notifier));
+  const app = join(prefix, "opt", "terminal-notifier", "terminal-notifier.app");
+  if (!existsSync(app) || !existsSync(LSREGISTER)) return;
+  try {
+    spawnSync(LSREGISTER, ["-f", app], { stdio: "ignore", timeout: NOTIFIER_TIMEOUT_MS });
+  } catch {
+    // Registration is a courtesy to delivery, never a reason not to post.
+  }
+}
+
 /**
  * Post through terminal-notifier. One fixed group, so a new banner replaces
  * the previous one instead of stacking; -ignoreDnD because a CI flip is worth
  * surfacing; -open carries the failing run when there is one.
  */
 export function postNotification(notification: Notification, notifier: string): boolean {
+  reregisterNotifier(notifier);
   const args = [
     "-title",
     notification.title,
