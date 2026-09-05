@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { defaultWebhookSocketPath, snapshotChannels } from "./channel-client.ts";
+import { DEFAULT_HOLD_MS, defaultNotifierStatePath, startNotifyDaemon } from "./ci-notifier.ts";
 import { applyCiObservation, projectionFromEnvelope } from "./ci-observation.ts";
 import { scanProjects } from "./git.ts";
 import { runGitHubWebhookSetupCli } from "./github-webhooks.ts";
@@ -33,10 +34,19 @@ interface WebhookConfigureInvocation {
   args: string[];
 }
 
+interface NotifyDaemonInvocation {
+  mode: "notify-daemon";
+  socketPath: string;
+  stateFile: string;
+  holdMs: number;
+  notifierBin?: string;
+}
+
 type Invocation =
   | ObservationInvocation
   | WebhookDaemonInvocation
   | WebhookConfigureInvocation
+  | NotifyDaemonInvocation
   | GuideInvocation;
 
 export { defaultWebhookSocketPath } from "./channel-client.ts";
@@ -86,6 +96,49 @@ export function parseArgs(args: readonly string[]): Invocation {
     }
     if (!secretFile) throw new Error("webhook-daemon needs --secret-file PATH");
     return { mode: "webhook-daemon", secretFile, port, socketPath, root };
+  }
+  if (args[0] === "notify-daemon") {
+    let socketPath = defaultWebhookSocketPath();
+    let stateFile = defaultNotifierStatePath();
+    let holdMs = DEFAULT_HOLD_MS;
+    let notifierBin: string | undefined;
+    const parseHold = (value: string): number => {
+      const seconds = Number(value);
+      if (!Number.isFinite(seconds) || seconds < 0 || seconds > 3600)
+        throw new Error("--hold must be a number of seconds from 0 to 3600");
+      return Math.round(seconds * 1000);
+    };
+    for (let index = 1; index < args.length; index += 1) {
+      const arg = args[index];
+      if (arg === "--help" || arg === "-h") return { mode: "help" };
+      if (
+        arg === "--socket" ||
+        arg === "--state-file" ||
+        arg === "--hold" ||
+        arg === "--notifier"
+      ) {
+        const value = args[index + 1];
+        if (!value) throw new Error(`${arg} needs a value`);
+        if (arg === "--socket") socketPath = resolve(value);
+        else if (arg === "--state-file") stateFile = resolve(value);
+        else if (arg === "--notifier") notifierBin = resolve(value);
+        else holdMs = parseHold(value);
+        index += 1;
+      } else if (arg?.startsWith("--socket=")) socketPath = resolve(arg.slice("--socket=".length));
+      else if (arg?.startsWith("--state-file="))
+        stateFile = resolve(arg.slice("--state-file=".length));
+      else if (arg?.startsWith("--notifier="))
+        notifierBin = resolve(arg.slice("--notifier=".length));
+      else if (arg?.startsWith("--hold=")) holdMs = parseHold(arg.slice("--hold=".length));
+      else throw new Error(`unknown notify-daemon option: ${arg}`);
+    }
+    return {
+      mode: "notify-daemon",
+      socketPath,
+      stateFile,
+      holdMs,
+      ...(notifierBin ? { notifierBin } : {}),
+    };
   }
   let mode: Invocation["mode"] = "tui";
   let help = false;
@@ -172,6 +225,33 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onTerminate);
       await daemon.close();
+      return signal === "SIGINT" ? 130 : 143;
+    } catch (error) {
+      process.stderr.write(
+        `agentsource: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      return 1;
+    }
+  }
+  if (invocation.mode === "notify-daemon") {
+    try {
+      const daemon = startNotifyDaemon({
+        socketPath: invocation.socketPath,
+        stateFile: invocation.stateFile,
+        holdMs: invocation.holdMs,
+        ...(invocation.notifierBin ? { notifierBin: invocation.notifierBin } : {}),
+      });
+      let onInterrupt = (): void => undefined;
+      let onTerminate = (): void => undefined;
+      const signal = await new Promise<"SIGINT" | "SIGTERM">((resolveSignal) => {
+        onInterrupt = () => resolveSignal("SIGINT");
+        onTerminate = () => resolveSignal("SIGTERM");
+        process.once("SIGINT", onInterrupt);
+        process.once("SIGTERM", onTerminate);
+      });
+      process.off("SIGINT", onInterrupt);
+      process.off("SIGTERM", onTerminate);
+      daemon.close();
       return signal === "SIGINT" ? 130 : 143;
     } catch (error) {
       process.stderr.write(

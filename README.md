@@ -212,3 +212,33 @@ to converge the fleet CLI installation.
 ```console
 bun run check
 ```
+
+## CI transition notifications
+
+`agentsource notify-daemon` is the receiver's resident subscriber for people
+rather than screens. It watches every `ci:*` channel, remembers one verdict per
+registered project — the normalized state of its primary-branch head, `PASS` or
+`FAIL` — and posts one macOS notification through `terminal-notifier` whenever
+that verdict flips. `PENDING`, `NONE`, `LOCAL`, and `UNKNOWN` never overwrite a
+remembered verdict, so a fresh push does not read as green before its run ends,
+and a project with no CI stays outside the count. A first `FAIL` for a project
+with no remembered verdict counts as going red; a first `PASS` is silent.
+
+Transitions are held for ninety seconds and coalesced, so a burst of pushes
+across repositories becomes one banner. Its title names what flipped; its
+message lists every project still red, or says all are green. The banner
+carries one fixed notification group, so a new one replaces the last instead
+of stacking, and opens the failing run when there is one.
+
+Verdicts persist in `~/.local/state/agentsource/notifier.json`, owner-only,
+so a restart or a receiver reconnect — which replays every projection —
+notifies only what changed while the daemon was away. The first start seeds
+silently and posts one baseline overview. Delivery is best-effort: a missing
+`terminal-notifier` is logged, never fatal.
+
+```console
+agentsource notify-daemon
+agentsource notify-daemon --hold 30 --state-file /tmp/notifier.json
+```
+
+AgentStart runs it as the `agentsource.notifier` launch agent.

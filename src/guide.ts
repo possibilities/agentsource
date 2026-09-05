@@ -183,6 +183,55 @@ export const CONTRACT: AgentContract = {
       ],
     },
     {
+      name: "notify-daemon",
+      summary:
+        "Post one grouped macOS notification whenever a project's primary branch flips between green and red",
+      audience: "operator",
+      mutates: true,
+      guidance:
+        "Long-running foreground process; runs until SIGINT or SIGTERM. Subscribes to the receiver's ci:* channels, remembers one PASS or FAIL verdict per project in a private state file, holds transitions briefly so a burst becomes one banner, and posts through terminal-notifier: the title names what flipped, the message lists every project still red or says all are green. The first start seeds silently and posts one baseline overview.",
+      blocking: true,
+      arguments: [
+        {
+          name: "--socket",
+          type: "string",
+          description: "Unix socket the receiver serves channels on.",
+          format: "path",
+          direction: "in",
+        },
+        {
+          name: "--state-file",
+          type: "string",
+          description:
+            "Private file remembering each project's last verdict, so a restart notifies only real changes.",
+          format: "path",
+          direction: "out",
+        },
+        {
+          name: "--hold",
+          type: "number",
+          description: "Seconds to hold transitions before posting, so a burst becomes one banner.",
+          default: 90,
+          minimum: 0,
+          maximum: 3600,
+        },
+        {
+          name: "--notifier",
+          type: "string",
+          description: "terminal-notifier executable to post through, instead of the one on PATH.",
+          format: "path",
+          direction: "in",
+        },
+      ],
+      examples: [
+        {
+          invocation: "agentsource notify-daemon",
+          description:
+            "Watch the default receiver socket and post grouped CI transitions until interrupted.",
+        },
+      ],
+    },
+    {
       name: "webhook-configure",
       summary: "Discover GitHub projects under ~/code and reconcile their repository webhooks",
       audience: "operator",
@@ -283,11 +332,13 @@ function renderArgument(argument: GuideArgument): string {
 export function renderHelp(): string {
   const scan = findCommand("scan");
   const daemon = findCommand("webhook-daemon");
+  const notifier = findCommand("notify-daemon");
   const configure = findCommand("webhook-configure");
   const lines: string[] = [];
   lines.push(
     `Usage: agentsource [--json | --snapshot] [--root PATH]`,
     `       agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH] [--root PATH]`,
+    `       agentsource notify-daemon [--socket PATH] [--state-file PATH] [--hold SECONDS] [--notifier PATH]`,
     `       agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]`,
     "",
     CONTRACT.meta.purpose,
@@ -299,6 +350,8 @@ export function renderHelp(): string {
   for (const argument of scan.arguments ?? []) lines.push(renderArgument(argument));
   lines.push("  --help                      show this help", "", "Webhook daemon options:");
   for (const argument of daemon.arguments ?? []) lines.push(renderArgument(argument));
+  lines.push("", "Notify daemon options:");
+  for (const argument of notifier.arguments ?? []) lines.push(renderArgument(argument));
   lines.push("", "Webhook configure options:");
   for (const argument of configure.arguments ?? []) lines.push(renderArgument(argument));
   lines.push("", "Run `agentsource guide --json` for the full machine-readable contract.", "");
