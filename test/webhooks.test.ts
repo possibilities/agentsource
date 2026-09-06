@@ -52,8 +52,12 @@ async function start(
   return daemon;
 }
 
-function subscribe(socket: Socket, patterns: string[]): void {
-  socket.write(`${JSON.stringify({ schemaVersion: 1, subscribe: patterns })}\n`);
+async function subscribe(socket: Socket, patterns: string[]): Promise<void> {
+  const response = nextRecord(socket);
+  socket.write(
+    `${JSON.stringify({ v: 1, type: "request", id: "sub", method: "event.subscribe", params: { events: patterns } })}\n`,
+  );
+  expect(await response).toMatchObject({ v: 1, type: "response", id: "sub", ok: true });
 }
 
 async function connect(path: string): Promise<Socket> {
@@ -217,7 +221,7 @@ describe("webhook daemon", () => {
   test("broadcasts one authenticated delivery as schema-versioned NDJSON", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
-    subscribe(socket, ["deliveries"]);
+    await subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const body = `{
   "repository": { "full_name": "possibilities/agentsource" },
@@ -229,18 +233,24 @@ describe("webhook daemon", () => {
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({ accepted: true, deliveryId: "delivery-123" });
     expect(await recordPromise).toEqual({
-      schemaVersion: 1,
-      channel: "deliveries",
-      emittedAt: "2026-08-27T20:00:00.000Z",
+      v: 1,
+      type: "event",
+      event: "deliveries",
       data: {
-        schemaVersion: 1,
-        receivedAt: "2026-08-27T20:00:00.000Z",
-        owner: "possibilities",
-        repo: "agentsource",
-        event: "push",
-        deliveryId: "delivery-123",
-        hookId: "42",
-        payload,
+        instanceId: expect.any(String),
+        generation: 1,
+        sequence: 1,
+        emittedAt: "2026-08-27T20:00:00.000Z",
+        delivery: {
+          schemaVersion: 1,
+          receivedAt: "2026-08-27T20:00:00.000Z",
+          owner: "possibilities",
+          repo: "agentsource",
+          event: "push",
+          deliveryId: "delivery-123",
+          hookId: "42",
+          payload,
+        },
       },
     });
     expect(statSync(daemon.socketPath).mode & 0o777).toBe(0o600);
@@ -250,23 +260,24 @@ describe("webhook daemon", () => {
   test("flushes one large delivery before treating a client as lagging", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
-    subscribe(socket, ["deliveries"]);
+    await subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const payload = {
       repository: { full_name: "possibilities/agentsource" },
       data: "x".repeat(64 * 1024),
     };
     expect((await deliver(daemon, JSON.stringify(payload))).status).toBe(202);
-    expect(((await recordPromise).data as { payload: typeof payload }).payload.data).toHaveLength(
-      64 * 1024,
-    );
+    expect(
+      ((await recordPromise).data as { delivery: { payload: typeof payload } }).delivery.payload
+        .data,
+    ).toHaveLength(64 * 1024);
     socket.destroy();
   });
 
   test("rejects invalid signatures and project mismatches without broadcasting them", async () => {
     const daemon = await start();
     const socket = await connect(daemon.socketPath);
-    subscribe(socket, ["deliveries"]);
+    await subscribe(socket, ["deliveries"]);
     const recordPromise = nextRecord(socket);
     const body = JSON.stringify({ repository: { full_name: "possibilities/agentsource" } });
 
@@ -276,43 +287,40 @@ describe("webhook daemon", () => {
     expect(mismatched.status).toBe(422);
     const accepted = await deliver(daemon, body, { "x-github-delivery": "delivery-good" });
     expect(accepted.status).toBe(202);
-    expect(((await recordPromise).data as WebhookDelivery).deliveryId).toBe("delivery-good");
+    expect(((await recordPromise).data as { delivery: WebhookDelivery }).delivery.deliveryId).toBe(
+      "delivery-good",
+    );
     socket.destroy();
   });
 
-  test("sends one initial projection per exact or prefix-matched CI channel", async () => {
-    const ciStore = new FakeCiStore([
-      projection("possibilities", "agentsource"),
-      projection("possibilities", "agentstart"),
-    ]);
-    const daemon = await start({ ciStore });
-
-    const exact = await connect(daemon.socketPath);
-    const exactRecord = nextRecord(exact);
-    subscribe(exact, ["ci:possibilities:agentsource"]);
-    expect(await exactRecord).toMatchObject({
-      channel: "ci:possibilities:agentsource",
-      data: { owner: "possibilities", repo: "agentsource", revision: 1 },
+  test("subscriptions acknowledge without replay; snapshots ignore filters and keep the connection open", async () => {
+    const daemon = await start({
+      ciStore: new FakeCiStore([
+        projection("possibilities", "agentsource"),
+        projection("possibilities", "agentstart"),
+      ]),
     });
-
-    const prefix = await connect(daemon.socketPath);
-    let received = "";
-    prefix.setEncoding("utf8");
-    prefix.on("data", (chunk: string) => {
-      received += chunk;
-    });
-    subscribe(prefix, ["ci:possibilities:*"]);
-    await Bun.sleep(10);
-    const channels = received
-      .trim()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as { channel: string }).channel);
-    expect(channels).toEqual(["ci:possibilities:agentsource", "ci:possibilities:agentstart"]);
-    exact.destroy();
-    prefix.destroy();
+    const socket = await connect(daemon.socketPath);
+    await subscribe(socket, ["ci:possibilities:agentsource"]);
+    for (const id of ["first", "second"]) {
+      const response = nextRecord(socket);
+      socket.write(
+        `${JSON.stringify({ v: 1, type: "request", id, method: "state.get", params: {} })}\n`,
+      );
+      expect(await response).toMatchObject({
+        id,
+        ok: true,
+        result: {
+          sequence: 0,
+          inventory: "complete",
+          projections: [{ repo: "agentsource" }, { repo: "agentstart" }],
+        },
+      });
+    }
+    socket.destroy();
   });
 
-  test("returns a bounded projection snapshot and closes the RPC connection", async () => {
+  test("filters the full snapshot locally for one-shot consumers", async () => {
     const ciStore = new FakeCiStore([
       projection("possibilities", "agentsource"),
       projection("possibilities", "agentstart"),
@@ -328,8 +336,8 @@ describe("webhook daemon", () => {
       diagnostics: [],
       values: [
         {
-          channel: "ci:possibilities:agentsource",
-          data: { owner: "possibilities", repo: "agentsource", revision: 1 },
+          event: "ci:possibilities:agentsource",
+          data: { projection: { owner: "possibilities", repo: "agentsource", revision: 1 } },
         },
       ],
     });
@@ -342,8 +350,7 @@ describe("webhook daemon", () => {
     ]);
     const daemon = await start({ ciStore });
     const socket = await connect(daemon.socketPath);
-    subscribe(socket, ["deliveries", "ci:possibilities:agentsource"]);
-    await nextRecord(socket);
+    await subscribe(socket, ["deliveries", "ci:possibilities:agentsource"]);
 
     const deliveryRecord = nextRecord(socket);
     const projectionRecord = nextRecord(socket);
@@ -352,26 +359,41 @@ describe("webhook daemon", () => {
       sha: "abc123",
     });
     expect((await deliver(daemon, body, { "x-github-event": "status" })).status).toBe(202);
-    expect(await deliveryRecord).toMatchObject({ channel: "deliveries" });
+    expect(await deliveryRecord).toMatchObject({ event: "deliveries" });
     expect(await projectionRecord).toMatchObject({
-      channel: "ci:possibilities:agentsource",
-      data: { revision: 2, heads: [{ aggregateState: "SUCCESS" }] },
+      event: "ci:possibilities:agentsource",
+      data: { projection: { revision: 2, heads: [{ aggregateState: "SUCCESS" }] } },
     });
     socket.destroy();
   });
 
-  test("closes clients that send malformed or unknown subscriptions", async () => {
+  test("closes malformed JSON clients; validates params without losing a subscription", async () => {
     const daemon = await start();
-    for (const request of [
-      "not-json\n",
-      `${JSON.stringify({ schemaVersion: 1, subscribe: [] })}\n`,
-      `${JSON.stringify({ schemaVersion: 1, subscribe: ["actions:*"] })}\n`,
-    ]) {
-      const socket = await connect(daemon.socketPath);
-      const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
-      socket.write(request);
-      await closed;
+    const malformed = await connect(daemon.socketPath);
+    const closed = new Promise<void>((resolve) => malformed.once("close", () => resolve()));
+    malformed.write("not-json\n");
+    await closed;
+    const socket = await connect(daemon.socketPath);
+    await subscribe(socket, ["deliveries"]);
+    for (const events of [[], ["Bad"], ["ci:*:bad"], Array(33).fill("*")]) {
+      const response = nextRecord(socket);
+      socket.write(
+        `${JSON.stringify({ v: 1, type: "request", id: "bad", method: "event.subscribe", params: { events } })}\n`,
+      );
+      expect(await response).toMatchObject({
+        id: "bad",
+        ok: false,
+        error: { code: "invalid_params" },
+      });
     }
+    const record = nextRecord(socket);
+    await deliver(
+      daemon,
+      JSON.stringify({ repository: { full_name: "possibilities/agentsource" } }),
+    );
+    expect(await record).toMatchObject({ event: "deliveries" });
+    await subscribe(socket, ["unknown.well-formed/*"]);
+    socket.destroy();
   });
 
   test("rejects oversized bodies and non-JSON webhook requests", async () => {
@@ -393,6 +415,7 @@ describe("webhook daemon", () => {
       secret: SECRET,
       socketPath: join(fixture, "webhooks.sock"),
       port: 0,
+      root: fixture,
       maxBodyBytes: 1024,
       maxInFlightBodyBytes: 20,
     });

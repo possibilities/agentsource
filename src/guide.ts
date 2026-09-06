@@ -134,6 +134,37 @@ export const CONTRACT: AgentContract = {
       ],
     },
     {
+      name: "event-socket",
+      summary: "Print the absolute path of exactly one live private event socket",
+      audience: "operator",
+      mutates: false,
+      guidance:
+        "Uses AGENTSOURCE_WEBHOOK_SOCKET or the default socket. --directory discovers *.sock endpoints and rejects ambiguity. Does not start services or read credentials.",
+      arguments: [
+        {
+          name: "--socket",
+          type: "string",
+          format: "path",
+          direction: "in",
+          description: "Select an exact socket.",
+        },
+        {
+          name: "--directory",
+          type: "string",
+          format: "path",
+          direction: "in",
+          description: "Discover one live socket in this private directory.",
+        },
+      ],
+      constraints: [{ kind: "conflicts", arguments: ["--socket", "--directory"] }],
+      examples: [
+        {
+          invocation: "agentsource event-socket",
+          description: "Resolve the configured live receiver.",
+        },
+      ],
+    },
+    {
       name: "webhook-daemon",
       summary: "Run the GitHub webhook receiver and serve CI channels over a Unix socket",
       audience: "operator",
@@ -337,6 +368,7 @@ export function renderHelp(): string {
   const lines: string[] = [];
   lines.push(
     `Usage: agentsource [--json | --snapshot] [--root PATH]`,
+    `       agentsource event-socket [--socket PATH | --directory PATH]`,
     `       agentsource webhook-daemon --secret-file PATH [--port PORT] [--socket PATH] [--root PATH]`,
     `       agentsource notify-daemon [--socket PATH] [--state-file PATH] [--hold SECONDS] [--notifier PATH]`,
     `       agentsource webhook-configure --url HTTPS_ORIGIN --secret-file PATH [--root PATH] [--apply]`,

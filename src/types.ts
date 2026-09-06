@@ -116,35 +116,7 @@ export interface WebhookDelivery {
   payload: unknown;
 }
 
-export const CHANNEL_PROTOCOL_SCHEMA_VERSION = 1 as const;
-
-/** The one request a Unix-socket client sends before receiving channel values. */
-export interface ChannelSubscription {
-  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
-  subscribe: string[];
-}
-
-export interface ChannelSnapshotRequest {
-  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
-  requestId: string;
-  method: "snapshot";
-  channels: string[];
-}
-
-/** One value emitted on a subscribed Unix-socket channel. */
-export interface ChannelEnvelope<T = unknown> {
-  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
-  channel: string;
-  emittedAt: string;
-  data: T;
-}
-
-export interface ChannelSnapshotResponse {
-  schemaVersion: typeof CHANNEL_PROTOCOL_SCHEMA_VERSION;
-  requestId: string;
-  ok: true;
-  values: ChannelEnvelope[];
-}
+export type { CiEvent, EventFrame, EventResponse, EventSnapshot } from "./event-schema.ts";
 
 export const CI_PROJECTION_SCHEMA_VERSION = 3 as const;
 

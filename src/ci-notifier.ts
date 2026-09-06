@@ -336,16 +336,22 @@ export function startNotifyDaemon(options: NotifyDaemonOptions): NotifyDaemonHan
     if (timer === undefined) timer = setTimeout(flush, options.holdMs);
   };
 
+  const observe = (projection: CiProjection): void => {
+    const applied = applyProjection(state, projection, now());
+    if (applied.changed) writeState(options.stateFile, state);
+    if (applied.transition) pending.push(applied.transition);
+    if (!state.seeded || applied.transition) schedule();
+  };
   const subscription = subscribeChannels({
     channels: ["ci:*"],
     socketPath: options.socketPath,
+    onSnapshot: (snapshot) => {
+      // Verdict comparison is durable: resnapshotting unchanged CI never notifies again.
+      for (const projection of snapshot.projections) observe(projection);
+    },
     onValue: (value) => {
       const projection = projectionFromEnvelope(value);
-      if (!projection) return;
-      const applied = applyProjection(state, projection, now());
-      if (applied.changed) writeState(options.stateFile, state);
-      if (applied.transition) pending.push(applied.transition);
-      if (!state.seeded || applied.transition) schedule();
+      if (projection) observe(projection);
     },
     onAvailability: (isAvailable, diagnostic) => {
       if (available === isAvailable) return;

@@ -2,14 +2,13 @@ import { resolve } from "node:path";
 import { projectIsVisible } from "./git.ts";
 import { ciChannel } from "./github-ci.ts";
 import type {
-  ChannelEnvelope,
   CiAggregateState,
   CiProjection,
   CiState,
   CiSummary,
+  EventFrame,
   ScanResult,
 } from "./types.ts";
-import { CI_PROJECTION_SCHEMA_VERSION } from "./types.ts";
 
 export function normalizeCiState(state: CiAggregateState): CiState {
   switch (state) {
@@ -30,12 +29,9 @@ export function normalizeCiState(state: CiAggregateState): CiState {
   }
 }
 
-export function projectionFromEnvelope(envelope: ChannelEnvelope): CiProjection | null {
-  const value = envelope.data;
-  if (typeof value !== "object" || value === null) return null;
-  if (Reflect.get(value, "schemaVersion") !== CI_PROJECTION_SCHEMA_VERSION) return null;
-  if (!envelope.channel.startsWith("ci:")) return null;
-  return value as CiProjection;
+export function projectionFromEnvelope(envelope: EventFrame): CiProjection | null {
+  if (!("projection" in envelope.data)) return null;
+  return envelope.data.projection;
 }
 
 function summary(projection: CiProjection | undefined, sha: string | null): CiSummary {

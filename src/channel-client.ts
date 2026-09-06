@@ -1,169 +1,211 @@
 import { createConnection, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { JsonLines } from "./event-framing.ts";
 import {
-  CHANNEL_PROTOCOL_SCHEMA_VERSION,
-  type ChannelEnvelope,
-  type ChannelSnapshotResponse,
-} from "./types.ts";
+  type EventFrame,
+  type EventSnapshot,
+  eventSchema,
+  filtersSchema,
+  MAX_FRAME_BYTES,
+  MAX_QUEUED_BYTES,
+  responseSchema,
+  snapshotSchema,
+  subscribedSchema,
+  subscriptionMatches,
+} from "./event-schema.ts";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const RECONNECT_DELAY_MS = 1_000;
-
 export function defaultWebhookSocketPath(): string {
-  return (
+  return resolve(
     process.env.AGENTSOURCE_WEBHOOK_SOCKET ??
-    join(homedir(), ".local", "state", "agentsource", "webhooks.sock")
+      join(homedir(), ".local", "state", "agentsource", "webhooks.sock"),
   );
 }
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function parseEnvelope(value: unknown): ChannelEnvelope | null {
-  if (typeof value !== "object" || value === null) return null;
-  const schemaVersion = Reflect.get(value, "schemaVersion");
-  const channel = Reflect.get(value, "channel");
-  const emittedAt = Reflect.get(value, "emittedAt");
-  if (
-    schemaVersion !== CHANNEL_PROTOCOL_SCHEMA_VERSION ||
-    typeof channel !== "string" ||
-    typeof emittedAt !== "string"
-  )
-    return null;
-  return { schemaVersion, channel, emittedAt, data: Reflect.get(value, "data") };
-}
-
 export interface ChannelSnapshotResult {
   available: boolean;
-  values: ChannelEnvelope[];
+  values: EventFrame[];
   diagnostics: string[];
 }
-
+export function snapshotValues(snapshot: EventSnapshot, channels: readonly string[]): EventFrame[] {
+  return snapshot.projections.flatMap((projection) => {
+    const event = `ci:${projection.owner.toLowerCase()}:${projection.repo.toLowerCase()}`;
+    return subscriptionMatches(channels, event)
+      ? [
+          {
+            v: 1 as const,
+            type: "event" as const,
+            event,
+            data: {
+              instanceId: snapshot.instanceId,
+              generation: snapshot.generation,
+              sequence: snapshot.sequence,
+              emittedAt: projection.projectedAt,
+              inventory: snapshot.inventory,
+              projection,
+            },
+          },
+        ]
+      : [];
+  });
+}
+function request(socket: Socket, id: string, method: string, params: object): void {
+  socket.write(`${JSON.stringify({ v: 1, type: "request", id, method, params })}\n`);
+}
 export async function snapshotChannels(options: {
   channels: readonly string[];
   socketPath?: string;
   timeoutMs?: number;
   requestId?: string;
 }): Promise<ChannelSnapshotResult> {
-  const socketPath = options.socketPath ?? defaultWebhookSocketPath();
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const requestId = options.requestId ?? `agentsource-${process.pid}-${Date.now()}`;
-  return await new Promise((resolve) => {
-    const socket = createConnection(socketPath);
+  filtersSchema.parse(options.channels);
+  const id = options.requestId ?? "state";
+  if (!id || id.length > 128) throw new Error("Invalid request ID");
+  return new Promise((resolveResult) => {
+    const socket = createConnection(options.socketPath ?? defaultWebhookSocketPath());
+    const input = new JsonLines(MAX_FRAME_BYTES);
     let settled = false;
-    let input = "";
     const finish = (result: ChannelSnapshotResult): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(result);
+      resolveResult(result);
     };
     const fail = (message: string): void =>
       finish({ available: false, values: [], diagnostics: [`CI socket unavailable: ${message}`] });
-    const timer = setTimeout(() => fail(`timed out after ${timeoutMs}ms`), timeoutMs);
-    socket.setEncoding("utf8");
-    socket.once("connect", () => {
-      socket.write(
-        `${JSON.stringify({
-          schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
-          requestId,
-          method: "snapshot",
-          channels: [...options.channels],
-        })}\n`,
-      );
-    });
-    socket.on("data", (chunk: string) => {
-      input += chunk;
-      if (Buffer.byteLength(input, "utf8") > 32 * 1024 * 1024) {
-        fail("snapshot response exceeded 32 MiB");
-        return;
-      }
-      const newline = input.indexOf("\n");
-      if (newline < 0) return;
+    const timer = setTimeout(
+      () => fail("snapshot timed out"),
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
+    socket.once("connect", () => request(socket, id, "state.get", {}));
+    socket.on("data", (chunk: Buffer) => {
       try {
-        const parsed = JSON.parse(input.slice(0, newline)) as ChannelSnapshotResponse;
-        if (
-          parsed.schemaVersion !== CHANNEL_PROTOCOL_SCHEMA_VERSION ||
-          parsed.requestId !== requestId ||
-          parsed.ok !== true ||
-          !Array.isArray(parsed.values)
-        ) {
-          fail("daemon returned an invalid snapshot response");
-          return;
-        }
-        const values = parsed.values.map(parseEnvelope);
-        if (values.some((value) => value === null)) {
-          fail("daemon returned an invalid channel envelope");
-          return;
-        }
-        finish({ available: true, values: values as ChannelEnvelope[], diagnostics: [] });
+        input.push(chunk, (raw) => {
+          const response = responseSchema.parse(raw);
+          if (response.id !== id || !response.ok) throw new Error("Invalid snapshot response");
+          const snapshot = snapshotSchema.parse(response.result);
+          finish({
+            available: snapshot.inventory === "complete",
+            values: snapshotValues(snapshot, options.channels),
+            diagnostics: snapshot.diagnostics,
+          });
+        });
       } catch (error) {
-        fail(`daemon returned invalid JSON: ${errorText(error)}`);
+        fail(String(error));
       }
     });
     socket.once("error", (error) => fail(error.message));
-    socket.once("end", () => {
-      if (!settled) fail("daemon closed before returning a snapshot");
-    });
+    socket.once("close", () => fail("connection closed"));
   });
 }
-
 export interface ChannelSubscriptionHandle {
   close: () => void;
 }
-
-/** Subscribe with automatic reconnect; callbacks never make the TUI lifecycle fail. */
+/** Reconcile current state on every connection; transient deliveries bypass snapshot watermarks. */
 export function subscribeChannels(options: {
   channels: readonly string[];
   socketPath?: string;
-  onValue: (value: ChannelEnvelope) => void;
+  timeoutMs?: number;
+  reconnectDelayMs?: number;
+  onValue: (value: EventFrame) => void;
+  onSnapshot: (snapshot: EventSnapshot) => void;
   onAvailability: (available: boolean, diagnostic?: string) => void;
 }): ChannelSubscriptionHandle {
-  const socketPath = options.socketPath ?? defaultWebhookSocketPath();
+  const channels = [...new Set(filtersSchema.parse(options.channels))];
   let stopped = false;
   let socket: Socket | null = null;
   let reconnect: ReturnType<typeof setTimeout> | undefined;
   const connect = (): void => {
     if (stopped) return;
-    let input = "";
-    const current = createConnection(socketPath);
+    options.onAvailability(false, "CI feed initializing");
+    const current = createConnection(options.socketPath ?? defaultWebhookSocketPath());
     socket = current;
-    current.setEncoding("utf8");
-    current.once("connect", () => {
-      options.onAvailability(true);
-      current.write(
-        `${JSON.stringify({
-          schemaVersion: CHANNEL_PROTOCOL_SCHEMA_VERSION,
-          subscribe: [...options.channels],
-        })}\n`,
-      );
-    });
-    current.on("data", (chunk: string) => {
-      input += chunk;
-      let newline = input.indexOf("\n");
-      while (newline >= 0) {
-        const line = input.slice(0, newline);
-        input = input.slice(newline + 1);
-        try {
-          const envelope = parseEnvelope(JSON.parse(line) as unknown);
-          if (envelope) options.onValue(envelope);
-        } catch {
-          // A malformed daemon record is ignored; reconnect will replace state.
-        }
-        newline = input.indexOf("\n");
+    const input = new JsonLines(MAX_FRAME_BYTES);
+    let phase: "subscribe" | "snapshot" | "live" = "subscribe";
+    let context: EventSnapshot | null = null;
+    let buffered: EventFrame[] = [];
+    let bufferedBytes = 0;
+    const timer = setTimeout(
+      () => current.destroy(new Error("CI feed initialization timed out")),
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    );
+    const apply = (frame: EventFrame): void => {
+      if (frame.event === "deliveries") {
+        options.onValue(frame);
+        return;
+      }
+      if (!context) return;
+      if (
+        frame.data.instanceId !== context.instanceId ||
+        frame.data.generation !== context.generation
+      ) {
+        // A replacement invalidates all prior local state; reconnect and obtain its snapshot.
+        current.destroy(new Error("CI producer state replaced"));
+        return;
+      }
+      if (frame.data.sequence <= context.sequence) return;
+      context.sequence = frame.data.sequence;
+      if ("inventory" in frame.data)
+        options.onAvailability(
+          frame.data.inventory === "complete",
+          frame.data.inventory === "complete" ? undefined : "CI projection incomplete",
+        );
+      options.onValue(frame);
+    };
+    current.once("connect", () => request(current, "sub", "event.subscribe", { events: channels }));
+    current.on("data", (chunk: Buffer) => {
+      try {
+        input.push(chunk, (raw) => {
+          if (current.destroyed) return;
+          const event = eventSchema.safeParse(raw);
+          if (event.success) {
+            const frame = event.data;
+            if (frame.event === "deliveries") options.onValue(frame);
+            else if (phase === "live") apply(frame);
+            else {
+              bufferedBytes += Buffer.byteLength(JSON.stringify(raw));
+              if (bufferedBytes > MAX_QUEUED_BYTES || buffered.length >= 4096)
+                throw new Error("CI initialization buffer exceeded");
+              buffered.push(frame);
+            }
+            return;
+          }
+          const response = responseSchema.parse(raw);
+          if (!response.ok) throw new Error(response.error.message);
+          if (phase === "subscribe" && response.id === "sub") {
+            const acknowledgment = subscribedSchema.parse(response.result);
+            if (JSON.stringify(acknowledgment.events) !== JSON.stringify(channels))
+              throw new Error("Subscription acknowledgment does not match filters");
+            phase = "snapshot";
+            request(current, "state", "state.get", {});
+          } else if (phase === "snapshot" && response.id === "state") {
+            context = snapshotSchema.parse(response.result);
+            options.onSnapshot(structuredClone(context));
+            phase = "live";
+            options.onAvailability(
+              context.inventory === "complete",
+              context.diagnostics.join("; ") || undefined,
+            );
+            for (const frame of buffered) apply(frame);
+            buffered = [];
+            bufferedBytes = 0;
+            clearTimeout(timer);
+          } else throw new Error("Unexpected response");
+        });
+      } catch (error) {
+        current.destroy(new Error(String(error)));
       }
     });
-    current.once("error", (error) => {
-      options.onAvailability(false, `CI socket unavailable: ${error.message}`);
-    });
+    current.once("error", (error) =>
+      options.onAvailability(false, `CI socket unavailable: ${error.message}`),
+    );
     current.once("close", () => {
+      clearTimeout(timer);
       if (socket === current) socket = null;
       if (stopped) return;
       options.onAvailability(false, "CI socket unavailable: connection closed");
-      reconnect = setTimeout(connect, RECONNECT_DELAY_MS);
+      reconnect = setTimeout(connect, options.reconnectDelayMs ?? 1_000);
     });
   };
   connect();

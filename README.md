@@ -84,7 +84,7 @@ Agentsource can run a foreground webhook daemon for a process supervisor. Its
 HTTP listener is fixed to `127.0.0.1`; expose that listener to GitHub through
 Tailscale Funnel. Each correctly signed request to `/<owner>/<repo>` becomes
 one webhook delivery available through a private Unix socket. Socket clients
-must subscribe before the daemon sends them anything.
+subscribe to receive live events; snapshot requests receive correlated replies.
 
 The installer creates one private secret when it is absent and preserves it on
 every later run. Keep it stable across the daemon and GitHub webhook
@@ -99,10 +99,10 @@ agentsource webhook-daemon \
 ```
 
 The daemon discovers registered GitHub projects directly below `~/code` at
-startup, but does not query GitHub until a client first requests a missing CI
-projection. A cached projection is authoritative regardless of age; later
-snapshot requests return it without another GitHub call. Relevant webhooks
-refresh the affected projection. Pass `--root PATH` to choose a different
+startup and hydrates the full CI projection before opening the feed. A cached
+projection is authoritative regardless of age; later snapshots read the retained
+projection without another GitHub call. Relevant webhooks refresh the affected
+projection. Pass `--root PATH` to choose a different
 project root. CI query failures are reported in projection diagnostics and do
 not stop webhook delivery.
 
@@ -159,30 +159,26 @@ Reconciliation is deliberately scoped to GitHub projects currently found
 under the selected root. Removing a local project does not delete its remote
 hook; stale-hook inventory and explicit removal belong to a later slice.
 
-A client sends exactly one newline-delimited subscription. `deliveries` is the
-live webhook delivery channel. Each `ci:<owner>:<repo>` channel is the complete
-current check/status projection for that project's relevant Git heads,
-including its configured primary branch and live local worktree HEADs;
-the terminal-star prefix `ci:*` selects every registered CI projection.
+The Unix feed follows the [fleet event API](docs/events.md), with a checked-in
+[JSON Schema catalog](events.schema.json). Clients can replace subscriptions and
+read snapshots repeatedly on the same connection:
 
 ```json
-{"schemaVersion":1,"subscribe":["deliveries","ci:*"]}
+{"v":1,"type":"request","id":"sub","method":"event.subscribe","params":{"events":["deliveries","ci:*"]}}
+{"v":1,"type":"request","id":"state","method":"state.get","params":{}}
 ```
 
-Every emitted NDJSON envelope has `schemaVersion`, `channel`, `emittedAt`, and
-`data`. A CI subscription immediately receives one complete envelope per
-matching registered project; later relevant webhooks refresh and emit only the
-affected project's projection. The `deliveries` channel has no replay.
-Prefixes may select the whole namespace (`ci:*`) or one owner's namespace
-(`ci:possibilities:*`); `*` selects every channel.
+Await the subscription acknowledgment, buffer current-state events, then replace
+local state at the snapshot's sequence watermark and apply newer CI events.
+`state.get` always returns the full bounded projection, independently of filters.
+`ci:<owner>:<repo>` events replace a repository's current CI state; `deliveries`
+is a transient stream that snapshots neither replay nor supersede. The TUI,
+notifier, and watcher resubscribe and resnapshot after disconnects.
 
-For one-shot consumers, send a snapshot request instead of a subscription. The
-daemon hydrates only matching missing projections, returns their current
-envelopes in one response, and closes the connection:
-
-```json
-{"schemaVersion":1,"requestId":"observation-1","method":"snapshot","channels":["ci:*"]}
-```
+Filters accept exact names or a literal trailing-star prefix, with `*` selecting
+all events. Omitted/null params default to `{}`; an omitted `events` list defaults
+to `["*"]`. Discover an exact running receiver with `agentsource event-socket`
+(or `--socket PATH` / `--directory DIR`). Discovery never starts a service.
 
 Use the included client to try exact channels, prefixes, or both:
 

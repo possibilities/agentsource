@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { defaultWebhookSocketPath, snapshotChannels } from "./channel-client.ts";
 import { DEFAULT_HOLD_MS, defaultNotifierStatePath, startNotifyDaemon } from "./ci-notifier.ts";
 import { applyCiObservation, projectionFromEnvelope } from "./ci-observation.ts";
+import { discoverEventSocket } from "./event-discovery.ts";
 import { scanProjects } from "./git.ts";
 import { runGitHubWebhookSetupCli } from "./github-webhooks.ts";
 import { renderGuideJson, renderHelp } from "./guide.ts";
@@ -43,6 +44,7 @@ interface NotifyDaemonInvocation {
 }
 
 type Invocation =
+  | { mode: "event-socket"; socketPath?: string; directory?: string }
   | ObservationInvocation
   | WebhookDaemonInvocation
   | WebhookConfigureInvocation
@@ -56,6 +58,18 @@ function usage(): string {
 }
 
 export function parseArgs(args: readonly string[]): Invocation {
+  if (args[0] === "event-socket") {
+    if (args.length === 1) return { mode: "event-socket" };
+    if (args.length === 2 && (args[1] === "--help" || args[1] === "-h")) return { mode: "help" };
+    if (args.length !== 3 || !args[2] || !["--socket", "--directory"].includes(args[1] ?? ""))
+      throw new Error("event-socket accepts --socket PATH or --directory PATH");
+    return {
+      mode: "event-socket",
+      ...(args[1] === "--socket"
+        ? { socketPath: resolve(args[2]) }
+        : { directory: resolve(args[2]) }),
+    };
+  }
   if (args[0] === "guide") {
     return { mode: "guide" };
   }
@@ -182,6 +196,15 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     );
     process.stderr.write(usage());
     return 2;
+  }
+  if (invocation.mode === "event-socket") {
+    try {
+      process.stdout.write(`${await discoverEventSocket(invocation)}\n`);
+      return 0;
+    } catch (error) {
+      process.stderr.write(`agentsource: ${String(error)}\n`);
+      return 1;
+    }
   }
   if (invocation.mode === "guide") {
     process.stdout.write(renderGuideJson());

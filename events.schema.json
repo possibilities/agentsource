@@ -1,0 +1,892 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/requests"
+    },
+    {
+      "$ref": "#/$defs/responses"
+    },
+    {
+      "$ref": "#/$defs/events"
+    }
+  ],
+  "$defs": {
+    "requests": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "event.subscribe"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "minItems": 1,
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^(?:\\*|[a-z][a-z0-9._:/-]*\\*?)$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["v", "type", "id", "method"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "request"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "method": {
+              "type": "string",
+              "const": "state.get"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": ["v", "type", "id", "method"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "responses": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "subscribed": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "events": {
+                      "minItems": 1,
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^(?:\\*|[a-z][a-z0-9._:/-]*\\*?)$"
+                      }
+                    }
+                  },
+                  "required": ["subscribed", "events"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "instanceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Random producer lifetime ID; changes on restart."
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991,
+                      "description": "Always 1: this producer has no replaceable runtime."
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "Publication watermark, not a durable replay cursor."
+                    },
+                    "inventory": {
+                      "type": "string",
+                      "enum": ["complete", "incomplete", "unavailable"]
+                    },
+                    "diagnostics": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "projections": {
+                      "maxItems": 1024,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "schemaVersion": {
+                            "type": "number",
+                            "const": 3
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "projectedAt": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "paths": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "visibility": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": ["PRIVATE", "PUBLIC", "INTERNAL"]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "defaultBranch": {
+                            "type": ["string", "null"]
+                          },
+                          "primaryBranch": {
+                            "type": "string"
+                          },
+                          "heads": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "sha": {
+                                  "type": "string"
+                                },
+                                "committedAt": {
+                                  "type": ["string", "null"]
+                                },
+                                "aggregateState": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ERROR",
+                                    "EXPECTED",
+                                    "FAILURE",
+                                    "PENDING",
+                                    "SUCCESS",
+                                    "NONE",
+                                    "LOCAL",
+                                    "UNAVAILABLE"
+                                  ]
+                                },
+                                "contexts": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "check-run"
+                                          },
+                                          "name": {
+                                            "type": "string"
+                                          },
+                                          "status": {
+                                            "type": "string"
+                                          },
+                                          "conclusion": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "detailsUrl": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "app": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "startedAt": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "completedAt": {
+                                            "type": ["string", "null"]
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "name",
+                                          "status",
+                                          "conclusion",
+                                          "detailsUrl",
+                                          "app",
+                                          "startedAt",
+                                          "completedAt"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "type": "string",
+                                            "const": "status"
+                                          },
+                                          "name": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "description": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "targetUrl": {
+                                            "type": ["string", "null"]
+                                          },
+                                          "createdAt": {
+                                            "type": ["string", "null"]
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "name",
+                                          "state",
+                                          "description",
+                                          "targetUrl",
+                                          "createdAt"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    ]
+                                  }
+                                },
+                                "diagnostics": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "sha",
+                                "committedAt",
+                                "aggregateState",
+                                "contexts",
+                                "diagnostics"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "targets": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "branch"
+                                    },
+                                    "branch": {
+                                      "type": "string"
+                                    },
+                                    "role": {
+                                      "type": "string",
+                                      "enum": ["primary", "default"]
+                                    },
+                                    "headSha": {
+                                      "type": ["string", "null"]
+                                    }
+                                  },
+                                  "required": ["kind", "branch", "role", "headSha"],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "checkout"
+                                    },
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "branch": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "headSha": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": ["kind", "path", "branch", "headSha"],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "diagnostics": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "schemaVersion",
+                          "revision",
+                          "projectedAt",
+                          "owner",
+                          "repo",
+                          "paths",
+                          "available",
+                          "visibility",
+                          "defaultBranch",
+                          "primaryBranch",
+                          "heads",
+                          "targets",
+                          "diagnostics"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "instanceId",
+                    "generation",
+                    "sequence",
+                    "inventory",
+                    "diagnostics",
+                    "projections"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Bounded current CI state independent of filters. No delivery history. Incomplete if capped; unavailable if source initialization failed."
+                }
+              ]
+            }
+          },
+          "required": ["v", "type", "id", "ok", "result"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "v": {
+              "type": "number",
+              "const": 1
+            },
+            "type": {
+              "type": "string",
+              "const": "response"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ok": {
+              "type": "boolean",
+              "const": false
+            },
+            "error": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": ["invalid_request", "invalid_params", "unknown_method", "internal_error"]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": ["code", "message"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["v", "type", "id", "ok", "error"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "events": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ci:<owner>:<repo>"
+        },
+        {
+          "$ref": "#/$defs/deliveries"
+        }
+      ]
+    },
+    "ci:<owner>:<repo>": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "pattern": "^ci:[a-z0-9][a-z0-9-]{0,38}:[a-z0-9_.-]{1,100}$"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random producer lifetime ID; changes on restart."
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Always 1: this producer has no replaceable runtime."
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark, not a durable replay cursor."
+            },
+            "emittedAt": {
+              "type": "string"
+            },
+            "inventory": {
+              "type": "string",
+              "enum": ["complete", "incomplete", "unavailable"]
+            },
+            "projection": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "schemaVersion": {
+                      "type": "number",
+                      "const": 3
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "projectedAt": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "paths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "visibility": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": ["PRIVATE", "PUBLIC", "INTERNAL"]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "defaultBranch": {
+                      "type": ["string", "null"]
+                    },
+                    "primaryBranch": {
+                      "type": "string"
+                    },
+                    "heads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sha": {
+                            "type": "string"
+                          },
+                          "committedAt": {
+                            "type": ["string", "null"]
+                          },
+                          "aggregateState": {
+                            "type": "string",
+                            "enum": [
+                              "ERROR",
+                              "EXPECTED",
+                              "FAILURE",
+                              "PENDING",
+                              "SUCCESS",
+                              "NONE",
+                              "LOCAL",
+                              "UNAVAILABLE"
+                            ]
+                          },
+                          "contexts": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "check-run"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "status": {
+                                      "type": "string"
+                                    },
+                                    "conclusion": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "detailsUrl": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "app": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "startedAt": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "completedAt": {
+                                      "type": ["string", "null"]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "name",
+                                    "status",
+                                    "conclusion",
+                                    "detailsUrl",
+                                    "app",
+                                    "startedAt",
+                                    "completedAt"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "status"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "description": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "targetUrl": {
+                                      "type": ["string", "null"]
+                                    },
+                                    "createdAt": {
+                                      "type": ["string", "null"]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "name",
+                                    "state",
+                                    "description",
+                                    "targetUrl",
+                                    "createdAt"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            }
+                          },
+                          "diagnostics": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "sha",
+                          "committedAt",
+                          "aggregateState",
+                          "contexts",
+                          "diagnostics"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "targets": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "branch"
+                              },
+                              "branch": {
+                                "type": "string"
+                              },
+                              "role": {
+                                "type": "string",
+                                "enum": ["primary", "default"]
+                              },
+                              "headSha": {
+                                "type": ["string", "null"]
+                              }
+                            },
+                            "required": ["kind", "branch", "role", "headSha"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "const": "checkout"
+                              },
+                              "path": {
+                                "type": "string"
+                              },
+                              "branch": {
+                                "type": ["string", "null"]
+                              },
+                              "headSha": {
+                                "type": "string"
+                              }
+                            },
+                            "required": ["kind", "path", "branch", "headSha"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "diagnostics": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "schemaVersion",
+                    "revision",
+                    "projectedAt",
+                    "owner",
+                    "repo",
+                    "paths",
+                    "available",
+                    "visibility",
+                    "defaultBranch",
+                    "primaryBranch",
+                    "heads",
+                    "targets",
+                    "diagnostics"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Replace this repository; null removes it, never means successful CI."
+            }
+          },
+          "required": [
+            "instanceId",
+            "generation",
+            "sequence",
+            "emittedAt",
+            "inventory",
+            "projection"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": ["v", "type", "event", "data"],
+      "additionalProperties": false,
+      "description": "Current state: replace or remove ci:<owner>:<repo>. available:false inside a projection is source unavailability, not completion."
+    },
+    "deliveries": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "type": "number",
+          "const": 1
+        },
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "type": "string",
+          "const": "deliveries"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "instanceId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Random producer lifetime ID; changes on restart."
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Always 1: this producer has no replaceable runtime."
+            },
+            "sequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "Publication watermark, not a durable replay cursor."
+            },
+            "emittedAt": {
+              "type": "string"
+            },
+            "delivery": {
+              "type": "object",
+              "properties": {
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 1
+                },
+                "receivedAt": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "event": {
+                  "type": "string"
+                },
+                "deliveryId": {
+                  "type": "string"
+                },
+                "hookId": {
+                  "type": ["string", "null"]
+                },
+                "payload": {}
+              },
+              "required": [
+                "schemaVersion",
+                "receivedAt",
+                "owner",
+                "repo",
+                "event",
+                "deliveryId",
+                "hookId",
+                "payload"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": ["instanceId", "generation", "sequence", "emittedAt", "delivery"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["v", "type", "event", "data"],
+      "additionalProperties": false,
+      "description": "Transient authenticated webhook delivery; no persistence, replay or snapshot recovery. Never discard using a CI watermark."
+    }
+  }
+}

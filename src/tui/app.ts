@@ -303,8 +303,19 @@ export async function runTui(options: TuiOptions = {}): Promise<void> {
     channels: ["ci:*"],
     onValue: (value) => {
       const projection = projectionFromEnvelope(value);
-      if (!projection || closed) return;
-      projections.set(value.channel, projection);
+      if (closed || !("projection" in value.data)) return;
+      if (projection) projections.set(value.event, projection);
+      else projections.delete(value.event);
+      joinCi();
+      paint();
+    },
+    onSnapshot: (snapshot) => {
+      projections.clear();
+      for (const projection of snapshot.projections)
+        projections.set(
+          `ci:${projection.owner.toLowerCase()}:${projection.repo.toLowerCase()}`,
+          projection,
+        );
       joinCi();
       paint();
     },

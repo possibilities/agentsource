@@ -60,5 +60,12 @@ test("every command is a well-formed tree with no agent-audience verb", () => {
 
 test("every real dispatch verb is present in the contract, none hidden", () => {
   const names = CONTRACT.commands.map((command) => command.name).sort();
-  expect(names).toEqual(["guide", "notify-daemon", "scan", "webhook-configure", "webhook-daemon"]);
+  expect(names).toEqual([
+    "event-socket",
+    "guide",
+    "notify-daemon",
+    "scan",
+    "webhook-configure",
+    "webhook-daemon",
+  ]);
 });

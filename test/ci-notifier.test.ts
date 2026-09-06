@@ -13,7 +13,7 @@ import {
   startNotifyDaemon,
   writeState,
 } from "../src/ci-notifier.ts";
-import type { ChannelEnvelope, CiAggregateState, CiProjection } from "../src/types.ts";
+import type { CiAggregateState, CiProjection } from "../src/types.ts";
 
 const NOW = new Date("2026-09-05T12:00:00Z");
 
@@ -233,6 +233,7 @@ test("state survives a round trip, rejects garbage, and is owner-only", () => {
 interface FakeReceiver {
   socketPath: string;
   send: (projections: CiProjection[]) => void;
+  disconnect: () => void;
   close: () => Promise<void>;
 }
 
@@ -240,24 +241,40 @@ async function startFakeReceiver(fixture: string): Promise<FakeReceiver> {
   const socketPath = join(fixture, "webhooks.sock");
   let initial: CiProjection[] = [];
   const clients = new Set<Socket>();
-  const envelope = (projection: CiProjection): string =>
-    `${JSON.stringify({
-      schemaVersion: 1,
-      channel: `ci:${projection.owner}:${projection.repo}`,
-      emittedAt: NOW.toISOString(),
-      data: projection,
-    } satisfies ChannelEnvelope)}\n`;
+  let sequence = 0;
+  const context = () => ({ instanceId: "fake", generation: 1, sequence });
+  const envelope = (projection: CiProjection): string => {
+    sequence++;
+    return `${JSON.stringify({ v: 1, type: "event", event: `ci:${projection.owner}:${projection.repo}`, data: { ...context(), emittedAt: NOW.toISOString(), inventory: "complete", projection } })}\n`;
+  };
   const server = createServer((socket) => {
     clients.add(socket);
     socket.setEncoding("utf8");
-    socket.once("data", () => {
-      for (const projection of initial) socket.write(envelope(projection));
+    let input = "";
+    socket.on("data", (chunk) => {
+      input += chunk;
+      let newline = input.indexOf("\n");
+      while (newline >= 0) {
+        const req = JSON.parse(input.slice(0, newline));
+        input = input.slice(newline + 1);
+        const result =
+          req.method === "event.subscribe"
+            ? { subscribed: true, events: req.params.events }
+            : { ...context(), inventory: "complete", diagnostics: [], projections: initial };
+        socket.write(
+          `${JSON.stringify({ v: 1, type: "response", id: req.id, ok: true, result })}\n`,
+        );
+        newline = input.indexOf("\n");
+      }
     });
     socket.once("close", () => clients.delete(socket));
   });
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
   return {
     socketPath,
+    disconnect: () => {
+      for (const client of clients) client.destroy();
+    },
     send: (projections) => {
       initial = projections;
       for (const client of clients)
@@ -325,6 +342,11 @@ test("the daemon seeds once, then posts one grouped banner per hold window", asy
       projection("funk", "FAILURE"),
     ]);
     await Bun.sleep(150);
+    expect(lines().length).toBe(2);
+
+    // A real disconnect resubscribes and resnapshots without duplicate banners.
+    receiver.disconnect();
+    await Bun.sleep(1200);
     expect(lines().length).toBe(2);
 
     // A restart remembers the verdicts and stays quiet about them.
