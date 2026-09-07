@@ -237,4 +237,4 @@ agentsource notify-daemon
 agentsource notify-daemon --hold 30 --state-file /tmp/notifier.json
 ```
 
-AgentStart runs it as the `agentsource.notifier` launch agent.
+AgentStart runs it as the `io.arthack.agentsource.notify` LaunchAgent.
