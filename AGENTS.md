@@ -1,5 +1,9 @@
 # Agent guidance
 
+Read [CONTEXT.md](CONTEXT.md) for observation, presence and projection terms.
+Read the [decision log](docs/adr/README.md) before changing the read-only scan
+or the meaning and lifetime of derived state.
+
 Agentsource is a read-only observer. Git commands may inspect repositories but
 must never fetch, stage, stash, switch, clean, reset, merge, push, or otherwise
 change the projects it reports.
