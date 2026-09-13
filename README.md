@@ -1,3 +1,5 @@
+> *Slop Made With Sweat: Made with a lot of love by someone who loves code but read none of it.*
+
 # agentsource
 
 Agentsource is a read-only Signal Room TUI for the Git projects directly under
