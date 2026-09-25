@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, relative, resolve } from "node:path";
-import { attachAgentPresence, type HerdrRunner, readHerdrSnapshot, runHerdr } from "./herdr.ts";
 import type {
   ProjectStatus,
   ScanResult,
@@ -530,8 +529,6 @@ async function inspectLinkedWorktree(
       behind: null,
       mergeState: "unknown",
       issue,
-      agents: [],
-      panes: [],
       ci: null,
     };
   }
@@ -558,8 +555,6 @@ async function inspectLinkedWorktree(
       (countIssue || mergeIssue
         ? counts.stderr.trim() || contained.stderr.trim() || "could not compare with primary branch"
         : null),
-    agents: [],
-    panes: [],
     ci: null,
   };
 }
@@ -606,8 +601,6 @@ async function inspectProject(
       primaryHead: primary.head,
       primaryWorking: aggregateWorking(primarySnapshot ? [primarySnapshot] : []),
       unpushed: unpushed.stats,
-      agents: [],
-      panes: [],
       worktrees: worktrees.sort((left, right) => left.displayPath.localeCompare(right.displayPath)),
       issues,
       githubVisibility: null,
@@ -620,7 +613,6 @@ async function inspectProject(
 export interface ScanOptions {
   root?: string;
   git?: GitRunner;
-  herdr?: HerdrRunner;
   includeQuiet?: boolean;
 }
 
@@ -636,7 +628,6 @@ export function projectIsVisible(project: ProjectStatus): boolean {
     project.worktrees.some((worktree) => worktree.working.files > 0) ||
     project.unpushed.commits > 0 ||
     project.worktrees.length > 0 ||
-    project.agents.length > 0 ||
     ciNeedsAttention
   );
 }
@@ -645,39 +636,25 @@ export function projectIsVisible(project: ProjectStatus): boolean {
 export async function scanProjects(options: ScanOptions = {}): Promise<ScanResult> {
   const root = normalize(options.root ?? resolve(homedir(), "code"));
   const git = options.git ?? runGit;
-  const herdrSnapshot = readHerdrSnapshot(options.herdr ?? runHerdr);
   let entries: ProjectEntry[];
   try {
     entries = await discoverProjects(root, git);
   } catch (error) {
-    const presence = await herdrSnapshot;
     return {
       root,
       projects: [],
-      agentPresence: {
-        available: presence.available,
-        diagnostics: presence.diagnostics,
-      },
       ci: { available: false, projections: [], diagnostics: ["CI projection not requested"] },
       diagnostics: [error instanceof Error ? error.message : String(error)],
       scannedAt: new Date(),
     };
   }
-  const [inspected, presence] = await Promise.all([
-    mapLimit(entries, 4, async (entry) => inspectProject(entry, git)),
-    herdrSnapshot,
-  ]);
+  const inspected = await mapLimit(entries, 4, async (entry) => inspectProject(entry, git));
   const projects = inspected.map(({ project }) => project);
-  await attachAgentPresence(projects, presence);
   return {
     root,
     projects: projects
       .filter((project) => options.includeQuiet === true || projectIsVisible(project))
       .sort((left, right) => left.name.localeCompare(right.name)),
-    agentPresence: {
-      available: presence.available,
-      diagnostics: presence.diagnostics,
-    },
     ci: { available: false, projections: [], diagnostics: ["CI projection not requested"] },
     diagnostics: inspected.flatMap(({ diagnostics }) => diagnostics),
     scannedAt: new Date(),

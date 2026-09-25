@@ -76,14 +76,14 @@ export const CONTRACT: AgentContract = {
     name: "agentsource",
     version: VERSION,
     purpose:
-      "Signal Room TUI and webhook service for local Git work across ~/code: working changes, unpushed work, linked worktrees, CI attention, and Herdr sessions.",
+      "Signal Room TUI and webhook service for local Git work across ~/code: working changes, unpushed work, linked worktrees, and CI attention.",
     audience: "operator",
   },
   commands: [
     {
       name: "scan",
       summary:
-        "Show ~/code projects with working changes, unpushed work, worktrees, CI attention, or Herdr sessions (the default, bare invocation)",
+        "Show ~/code projects with working changes, unpushed work, worktrees, or CI attention (the default, bare invocation)",
       audience: "operator",
       mutates: false,
       guidance:

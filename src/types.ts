@@ -19,30 +19,6 @@ export interface UnpushedStats {
 
 export type MergeState = "merged" | "unmerged" | "unknown";
 
-export interface AgentPresence {
-  agent: string;
-  status: string;
-  conversation: string | null;
-  sessionId: string | null;
-  paneId: string;
-  tabId: string;
-  workspaceId: string;
-  focused: boolean;
-}
-
-export interface HerdrPanePresence {
-  paneId: string;
-  tabId: string;
-  workspaceId: string;
-  title: string | null;
-  focused: boolean;
-}
-
-export interface AgentPresenceObservation {
-  available: boolean;
-  diagnostics: string[];
-}
-
 export interface WorktreeStatus {
   path: string;
   displayPath: string;
@@ -53,8 +29,6 @@ export interface WorktreeStatus {
   behind: number | null;
   mergeState: MergeState;
   issue: string | null;
-  agents: AgentPresence[];
-  panes: HerdrPanePresence[];
   ci: CiSummary | null;
 }
 
@@ -66,8 +40,6 @@ export interface ProjectStatus {
   primaryHead: string | null;
   primaryWorking: WorkingStats;
   unpushed: UnpushedStats;
-  agents: AgentPresence[];
-  panes: HerdrPanePresence[];
   worktrees: WorktreeStatus[];
   issues: string[];
   githubVisibility: GitHubRepositoryVisibility | null;
@@ -83,13 +55,12 @@ export interface CiObservation {
 export interface ScanResult {
   root: string;
   projects: ProjectStatus[];
-  agentPresence: AgentPresenceObservation;
   ci: CiObservation;
   diagnostics: string[];
   scannedAt: Date;
 }
 
-export const OBSERVATION_SCHEMA_VERSION = 4 as const;
+export const OBSERVATION_SCHEMA_VERSION = 5 as const;
 
 /** Stable machine-readable form of a point-in-time scan. */
 export interface SerializedObservation {
@@ -97,7 +68,6 @@ export interface SerializedObservation {
   scannedAt: string;
   root: string;
   projects: ProjectStatus[];
-  agentPresence: AgentPresenceObservation;
   ci: CiObservation;
   diagnostics: string[];
 }

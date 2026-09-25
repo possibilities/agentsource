@@ -59,7 +59,7 @@ function projectionForPath(
   );
 }
 
-/** Join daemon-owned CI state into a raw Git/Herdr scan, then apply visibility heuristics. */
+/** Join daemon-owned CI state into a raw Git scan, then apply visibility heuristics. */
 export function applyCiObservation(
   raw: ScanResult,
   observation: {

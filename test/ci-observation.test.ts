@@ -19,8 +19,6 @@ const project = (worktree = false): ProjectStatus => ({
     binary: 0,
   },
   unpushed: { commits: 0, files: 0, additions: 0, deletions: 0, binary: 0 },
-  agents: [],
-  panes: [],
   worktrees: worktree
     ? [
         {
@@ -42,8 +40,6 @@ const project = (worktree = false): ProjectStatus => ({
           behind: 0,
           mergeState: "unmerged",
           issue: null,
-          agents: [],
-          panes: [],
           ci: null,
         },
       ]
@@ -57,7 +53,6 @@ function scan(projects: ProjectStatus[]): ScanResult {
   return {
     root: "/code",
     projects,
-    agentPresence: { available: true, diagnostics: [] },
     ci: { available: false, projections: [], diagnostics: [] },
     diagnostics: [],
     scannedAt: new Date("2026-08-28T00:00:00Z"),
@@ -152,21 +147,15 @@ describe("CI observations", () => {
 
   test("an unavailable socket never presents retained projections as current", () => {
     const retained = project();
-    retained.agents.push({
-      agent: "codex",
-      status: "idle",
-      conversation: null,
-      sessionId: null,
-      paneId: "w1:p1",
-      tabId: "w1:t1",
-      workspaceId: "w1",
-      focused: false,
-    });
-    const observed = applyCiObservation(scan([retained]), {
-      available: false,
-      projections: [projection("FAILURE")],
-      diagnostics: ["connection closed"],
-    });
+    const observed = applyCiObservation(
+      scan([retained]),
+      {
+        available: false,
+        projections: [projection("FAILURE")],
+        diagnostics: ["connection closed"],
+      },
+      { includeQuiet: true },
+    );
     expect(observed.projects[0]?.primaryCi?.state).toBe("UNKNOWN");
     expect(observed.projects[0]?.githubVisibility).toBeNull();
     expect(observed.ci.projections).toEqual([]);

@@ -8,8 +8,6 @@ Agentsource is a read-only Signal Room TUI for the Git projects directly under
 - working changes in any live checkout;
 - commits on local branches that no locally known remote branch contains; or
 - an additional linked worktree; or
-- a supported Herdr agent associated with its primary checkout or a linked
-  worktree; or
 - pending or failing CI on its primary branch or a linked worktree.
 
 Working statistics belong only to the checkout that contains them: the primary
@@ -19,16 +17,6 @@ merged/unmerged relationship to the project's primary branch. The
 observation-wide total is derived from those checkout-local records rather than
 stored again on each project. The primary branch is `supervisor.trunk` when
 configured and `main` otherwise.
-
-Agentsource takes one `herdr api snapshot` and one `herdr workspace list`
-snapshot per scan. It associates every recognized agent and every otherwise
-unoccupied open pane through its workspace's recorded checkout when available,
-then falls back to the most-specific known checkout containing its current
-directory. Only supported agents contribute live TUI presence, project
-visibility, and Herdr session totals. Plain panes remain machine-readable in
-JSON without masquerading as agents or drawing attention in the TUI. A pane
-that starts elsewhere and later creates a worktree cannot be attributed without
-Herdr recording that provenance, so Agentsource does not guess.
 
 Agentsource never fetches and never writes to a repository. Remote state means
 “as of the last fetch,” and untracked contents are not read merely to calculate
@@ -59,16 +47,9 @@ scripts/install.sh --install
 scripts/install.sh --uninstall
 ```
 
-The JSON document has `schemaVersion: 4` and contains `scannedAt`, `root`,
-`projects`, `agentPresence`, `ci`, and `diagnostics`. Each project and linked
-worktree has `agents` and `panes` arrays. Projects also expose
-`githubVisibility`, which is null when no current GitHub projection is
-available. Normalized agent entries include harness and status,
-conversation and session identity when available, Herdr pane/tab/workspace
-identifiers, and focus state. Pane entries retain pane/tab/workspace identity,
-title, and focus state after an agent exits. `agentPresence.available`
-distinguishes an empty snapshot from an unavailable Herdr surface, while its
-diagnostics record degraded workspace metadata. `--json` forces this output in a terminal;
+The JSON document has `schemaVersion: 5` and contains `scannedAt`, `root`,
+`projects`, `ci`, and `diagnostics`. Projects expose `githubVisibility`, which
+is null when no current GitHub projection is available. `--json` forces this output in a terminal;
 `--snapshot` forces the plain-text form in any environment.
 
 Every visible primary branch and linked-worktree branch also has a normalized
@@ -77,7 +58,7 @@ top-level `ci.projections` array retains the complete daemon projections used
 to derive those summaries and their GitHub repository visibility. CI
 projections use schema version 3. One-shot observations obtain them through the
 Unix socket snapshot RPC; agentsource never queries GitHub from the observation
-process. If the daemon is unavailable, Git and Herdr observation still succeeds
+process. If the daemon is unavailable, Git observation still succeeds
 with CI availability diagnostics.
 
 ## GitHub webhook wiring

@@ -33,31 +33,10 @@ const PROJECT: ProjectStatus = {
     binary: 0,
   },
   unpushed: { commits: 3, files: 7, additions: 44, deletions: 2, binary: 1 },
-  agents: [
-    {
-      agent: "codex",
-      status: "working",
-      conversation: "agent-presence-in-signal-room",
-      sessionId: "session-primary",
-      paneId: "w1:p1",
-      tabId: "w1:t1",
-      workspaceId: "w1",
-      focused: true,
-    },
-  ],
-  panes: [
-    {
-      paneId: "w1:p2",
-      tabId: "w1:t1",
-      workspaceId: "w1",
-      title: "idle shell",
-      focused: false,
-    },
-  ],
   worktrees: [
     {
-      path: "/Users/example/.herdr/worktrees/project/worktree-long-name",
-      displayPath: "~/.herdr/worktrees/project/worktree-long-name",
+      path: "/Users/example/worktrees/project/worktree-long-name",
+      displayPath: "~/worktrees/project/worktree-long-name",
       branch: "worktree/long-running-feature-branch",
       head: "1234567890abcdef",
       working: {
@@ -74,27 +53,6 @@ const PROJECT: ProjectStatus = {
       behind: 1,
       mergeState: "unmerged",
       issue: null,
-      agents: [
-        {
-          agent: "claude",
-          status: "idle",
-          conversation: "review-agent-presence",
-          sessionId: "session-linked",
-          paneId: "w2:p1",
-          tabId: "w2:t1",
-          workspaceId: "w2",
-          focused: false,
-        },
-      ],
-      panes: [
-        {
-          paneId: "w2:p2",
-          tabId: "w2:t1",
-          workspaceId: "w2",
-          title: "finished agent shell",
-          focused: false,
-        },
-      ],
       ci: {
         channel: "ci:example:project",
         state: "FAIL",
@@ -110,7 +68,6 @@ const PROJECT: ProjectStatus = {
 const RESULT: ScanResult = {
   root: "/Users/example/code",
   projects: [PROJECT],
-  agentPresence: { available: true, diagnostics: [] },
   ci: { available: true, projections: [], diagnostics: [] },
   diagnostics: [],
   scannedAt: new Date("2026-08-26T00:00:00Z"),
@@ -139,12 +96,8 @@ describe("responsive renderer", () => {
     expect(frame).toContain("WORKING    clean");
     expect(frame).toContain("4 files · +120 -9");
     expect(frame).toContain("DIVERGED FROM main · 3 ahead · 1 behind");
-    expect(frame).toContain("codex WORKING");
-    expect(frame).toContain("claude IDLE");
     expect(frame).toContain("[PRIVATE]");
-    expect(frame).not.toContain("HERDR PANE");
-    expect(frame).not.toContain("idle shell");
-    expect(frame).not.toContain("finished agent shell");
+    expect(frame).not.toContain("HERDR SESSION");
     expect(frame).not.toContain("AGENTSOURCE");
     expect(frame).not.toContain("commands");
     expect(renderSnapshot(RESULT, 100)).toStartWith("AGENTSOURCE · /Users/example/code");
@@ -165,9 +118,7 @@ describe("responsive renderer", () => {
       ],
     };
     const wide = plainText(renderScan(aggregate, 120)).split("\n")[0];
-    expect(wide).toBe(
-      "▎ 2 PROJECTS · 3 LINKED WORKTREES · 14 WORKING FILES · 8 UNPUSHED COMMITS · 5 HERDR SESSIONS",
-    );
+    expect(wide).toBe("▎ 2 PROJECTS · 3 LINKED WORKTREES · 14 WORKING FILES · 8 UNPUSHED COMMITS");
 
     const narrow = plainText(renderScan(RESULT, 40)).split("\n").slice(0, 2);
     expect(narrow).toEqual(["▎ PROJECTS  1   WORKTREES 1", "  WORKING   4   UNPUSHED  3"]);
@@ -261,11 +212,10 @@ describe("responsive renderer", () => {
     const output = renderJson(RESULT);
     expect(output.endsWith("\n")).toBe(true);
     expect(JSON.parse(output)).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       scannedAt: "2026-08-26T00:00:00.000Z",
       root: RESULT.root,
       projects: RESULT.projects,
-      agentPresence: RESULT.agentPresence,
       ci: RESULT.ci,
       diagnostics: RESULT.diagnostics,
     });
